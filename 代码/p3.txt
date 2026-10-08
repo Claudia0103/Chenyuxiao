@@ -1,0 +1,291 @@
+import os
+import re
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
+from matplotlib.ticker import FuncFormatter
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 506]
+PLOT_PX = [0.1350, 0.2910, 0.7890, 0.5365]
+YMAX = 1200.0
+BG = "#1A1E43"
+GRID = "#404361"
+GRID_DASH = (5.4, 1.2)
+GRID_DASH_OFF = 0.0
+DOT = "#5B9BD5"
+BOX = "#152E5C"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+NOTE = "#D9D9D9"
+CATS = ["口红", "面膜", "隔离", "防晒", "精华", "面霜"]
+VALS = [653.0, 523.0, 648.0, 856.0, 714.0, 785.0]
+GRAD = [
+    (0.000,   0, 243, 254),
+    (0.052,   0, 241, 252),
+    (0.103,   0, 239, 251),
+    (0.155,   0, 236, 248),
+    (0.206,   0, 232, 246),
+    (0.258,   0, 227, 242),
+    (0.309,   0, 221, 238),
+    (0.361,   0, 213, 233),
+    (0.412,   0, 202, 227),
+    (0.464,   0, 192, 220),
+    (0.515,   0, 180, 213),
+    (0.567,   0, 167, 206),
+    (0.618,   0, 154, 199),
+    (0.670,   0, 141, 192),
+    (0.721,   0, 127, 186),
+    (0.773,   0, 115, 180),
+    (0.824,   0, 103, 176),
+    (0.876,   0,  93, 172),
+    (0.927,   0,  86, 170),
+    (0.979,   0,  79, 168),
+    (1.000,   0,  77, 167),
+]
+_FONT_FILES = {
+    "lt": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+
+_CJK_RE = re.compile(r"[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFF60]")
+_FP_CACHE = {}
+def fp(sz, bold=False, ea=False):
+    key = (round(float(sz), 2), bool(bold), bool(ea))
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES["ea" if ea else "lt"]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def mixed(target, x, y, s, fontsize=8, color=LBL, bold=False,
+          ha="center", va="center", zorder=10):
+    spans = []
+    for ch in str(s):
+        cjk = bool(_CJK_RE.match(ch))
+        if spans and spans[-1][1] == cjk:
+            spans[-1][0] += ch
+        else:
+            spans.append([ch, cjk])
+    if len(spans) == 1:
+        t, cjk = spans[0]
+        return [target.text(x, y, t, fontproperties=fp(fontsize, bold, cjk),
+                            color=color, ha=ha, va=va, zorder=zorder)]
+    renderer = target.figure.canvas.get_renderer()
+    ws = []
+    for t, cjk in spans:
+        a = target.text(0, 0, t, fontproperties=fp(fontsize, bold, cjk), alpha=0)
+        ws.append(a.get_window_extent(renderer).width)
+        a.remove()
+    tr = target.transData
+    ax_, ay_ = tr.transform((x, y))
+    x0 = ax_ - sum(ws) / 2.0 if ha == "center" else ax_
+    inv = tr.inverted()
+    out = []
+    for (t, cjk), w in zip(spans, ws):
+        fx, fy = inv.transform((x0 + w / 2.0, ay_))
+        out.append(target.text(fx, fy, t, fontproperties=fp(fontsize, bold, cjk),
+                               color=color, ha="center", va=va, zorder=zorder))
+        x0 += w
+    return out
+def fmtk(x, _=None):
+    return "%d" % int(round(x))
+def bar_path(x, w, bottom, top, rx_t, ry_t, rx_b, ry_b):
+    k = 0.5523
+    x0, x1 = x - w / 2.0, x + w / 2.0
+    verts = [
+        (x0, bottom + ry_b),
+        (x0, top - ry_t),
+        (x0, top - ry_t + k * ry_t), (x0 + rx_t - k * rx_t, top), (x0 + rx_t, top),
+        (x1 - rx_t, top),
+        (x1 - rx_t + k * rx_t, top), (x1, top - ry_t + k * ry_t), (x1, top - ry_t),
+        (x1, bottom + ry_b),
+        (x1, bottom + ry_b - k * ry_b), (x1 - rx_b + k * rx_b, bottom), (x1 - rx_b, bottom),
+        (x0 + rx_b, bottom),
+        (x0 + rx_b - k * rx_b, bottom), (x0, bottom + ry_b - k * ry_b), (x0, bottom + ry_b),
+        (x0, bottom + ry_b),
+    ]
+    codes = [Path.MOVETO, Path.LINETO,
+             Path.CURVE4, Path.CURVE4, Path.CURVE4,
+             Path.LINETO,
+             Path.CURVE4, Path.CURVE4, Path.CURVE4,
+             Path.LINETO,
+             Path.CURVE4, Path.CURVE4, Path.CURVE4,
+             Path.LINETO,
+             Path.CURVE4, Path.CURVE4, Path.CURVE4,
+             Path.CLOSEPOLY]
+    return Path(verts, codes)
+def grad_bar(ax, x, h, w, rx_px, ry_px, zorder=3, n=256):
+    t = np.linspace(0.0, 1.0, n)
+    tt = np.array([g[0] for g in GRAD])
+    img = np.empty((n, 1, 3), dtype=np.float32)
+    for ch, ci in enumerate((1, 2, 3)):
+        img[:, 0, ch] = np.interp(t, tt, np.array([g[ci] for g in GRAD], dtype=np.float32))
+    img /= 255.0
+    im = ax.imshow(img, extent=[x - w / 2.0, x + w / 2.0, 0.0, h],
+                   origin="upper", aspect="auto", zorder=zorder,
+                   interpolation="bilinear")
+    xa, xb = ax.get_xlim()
+    ya, yb = ax.get_ylim()
+    bb = ax.get_window_extent()
+    rx = rx_px * (xb - xa) / bb.width
+    ry = ry_px * (yb - ya) / bb.height
+    clip = PathPatch(bar_path(x, w, 0.0, h, rx, ry, rx, ry),
+                     transform=ax.transData, facecolor="none", edgecolor="none")
+    im.set_clip_path(clip)
+    return im
+TITLE_RUNS = [
+    {
+        "sz": 20.0, "bold": True, "color": TXT, "lnspc": 24.0,
+        "runs": ["3", "月商品销量对比"],
+    },
+    {
+        "sz": 14.0, "bold": False, "color": TXT, "lnspc": 24.0,
+        "runs": ["防晒销量最多，", "3", "月销量", "856",
+                 "；面膜最少，", "3", "月销量", "523"],
+        "run_dx": [0.25, 0.25, 0.25, 0.5, 2.25, 4.25, 4.5, 5.0],
+    },
+]
+NOTE_PARA = {
+    "sz": 8.0, "bold": False, "color": NOTE,
+    "runs": ["*", "注：数据来源于公司销售系统，统计日期", "截至", "2022.03.31"],
+    "run_dx": [0.0, 0.0, 1.5, 2.5],
+}
+BOX_TITLE = [0.05116, 0.03399, 0.96507, 0.22315]
+BOX_NOTE = [0.04289, 0.91196, 0.84436, 0.97707]
+INSET_PT = (0.05, 0.05, 0.1, 0.1)
+TB_TWEAK = {0: [-12.5, -0.6], 1: [-0.4]}
+def draw_textboxes(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)
+    def measure(text, sz, bold):
+        a = fig.text(0, 0, text, fontproperties=fp(sz, bold, ea=True),
+                     alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    boxes = [
+        (BOX_TITLE, TITLE_RUNS),
+        (BOX_NOTE, [NOTE_PARA]),
+    ]
+    for bi, (box, paras) in enumerate(boxes):
+        x0, y0, x1, y1 = box
+        lI = INSET_PT[2] * DPI
+        tI = INSET_PT[0] * DPI
+        xL = x0 * W + lI
+        y = y0 * H + tI
+        for pi, p in enumerate(paras):
+            sz, bold = p["sz"], p["bold"]
+            em = sz * EM_PT
+            lh = (p.get("lnspc") or 1.71 * sz) * EM_PT
+            tw = TB_TWEAK.get(bi, [])
+            off = tw[pi] if pi < len(tw) else 0.0
+            ytop = y + 0.43 * em + off
+            x = xL
+            rdx = p.get("run_dx") or []
+            for ri, text in enumerate(p["runs"]):
+                xr = x + (rdx[ri] if ri < len(rdx) else 0.0)
+                fig.text(xr / W, 1.0 - ytop / H, text,
+                         fontproperties=fp(sz, bold, ea=True),
+                         color=p["color"], ha="left", va="top", zorder=30)
+                x += measure(text, sz, bold)
+            y += lh
+DLAB = [
+    (0.18076, 0.45536),
+    (0.31587, 0.52416),
+    (0.44638, 0.46765),
+    (0.58150, 0.37920),
+    (0.71444, 0.44195),
+    (0.84161, 0.41237),
+]
+CARD_W, CARD_H = 47.0, 26.0
+CARD_R = 4.2
+CARD_DX, CARD_DY = 10.5, 14.5
+DOT_MS = 5.4
+LEAD_LW = 0.75
+NUM_DX, NUM_DY = 29.5, 12.3
+NUM_SZ = 7.2
+XLAB_SZ = 9.0
+XLAB_PAD = 7.8
+YLAB_PAD = 8.4
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    px, py, pw, ph = PLOT_PX
+    ax = fig.add_axes([px, 1.0 - (py + ph), pw, ph])
+    ax.set_facecolor(BG)
+    ax.set_ylim(0, YMAX)
+    ax.set_xlim(-0.5, len(VALS) - 0.5)
+    for i, v in enumerate(VALS):
+        grad_bar(ax, i, v, 1.0 / 6.0, rx_px=4.6, ry_px=4.6, zorder=3)
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color=GRID, linewidth=0.75,
+            linestyle=(GRID_DASH_OFF, GRID_DASH))
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.set_yticks([0, 200, 400, 600, 800, 1000, 1200])
+    ax.yaxis.set_major_formatter(FuncFormatter(fmtk))
+    ax.tick_params(axis="y", length=0, pad=YLAB_PAD, colors=LBL)
+    for lb in ax.get_yticklabels():
+        lb.set_fontproperties(fp(NUM_SZ, False, False))
+        lb.set_color(LBL)
+    ax.set_xticks(range(len(CATS)))
+    ax.tick_params(axis="x", length=0, pad=XLAB_PAD, colors=LBL)
+    ax.set_xticklabels(CATS, fontsize=XLAB_SZ, color=LBL)
+    for lb in ax.get_xticklabels():
+        lb.set_fontproperties(fp(XLAB_SZ, False, True))
+    inv = ax.transData.inverted()
+    def to_data(xp, yp):
+        return inv.transform((xp, H - yp))
+    dxu = (ax.get_xlim()[1] - ax.get_xlim()[0]) / (PLOT_PX[2] * W)
+    dyu = (ax.get_ylim()[1] - ax.get_ylim()[0]) / (PLOT_PX[3] * H)
+    for i, v in enumerate(VALS):
+        cx = DLAB[i][0] * W
+        cy = DLAB[i][1] * H
+        dotx_px, doty_px = cx + CARD_DX, cy + CARD_DY
+        (bx0, by_top) = to_data(cx, cy)
+        (bx1, by_bot) = to_data(cx + CARD_W, cy + CARD_H)
+        rxp = CARD_R * dxu
+        ryp = CARD_R * dyu
+        pth = bar_path((bx0 + bx1) / 2.0, bx1 - bx0, by_bot, by_top,
+                       rxp, ryp, rxp, ryp)
+        ax.add_patch(PathPatch(pth, facecolor=BOX, edgecolor="none", zorder=5))
+        (lx, ly) = to_data(dotx_px, doty_px)
+        ax.plot([lx, lx], [v, ly], color=DOT, lw=LEAD_LW,
+                solid_capstyle="butt", zorder=4)
+        ax.plot([lx], [ly], "o", ms=DOT_MS, mfc=DOT, mec="none", zorder=6)
+        (nx, ny) = to_data(cx + NUM_DX, cy + NUM_DY)
+        ax.text(nx, ny, fmtk(v), fontproperties=fp(NUM_SZ, False, False),
+                color=LBL, ha="center", va="center", zorder=7)
+    draw_textboxes(fig, W, H)
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart03_渐变圆角柱形图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

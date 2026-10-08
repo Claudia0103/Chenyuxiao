@@ -1,0 +1,123 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 500]
+BG = "#1A1E43"
+RED = "#E74E69"
+DIAMOND_FACE = "#1A1E43"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+AXIS_LINE = "#8FAADC"
+MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月"]
+RATES = [0.536, 0.498, 0.527, 0.708, 0.609, 0.496, 0.586, 0.704]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 80.0
+    PLOT_R = 600.0
+    PLOT_B = 80.0
+    PLOT_T = 380.0
+    VMIN = 0.4
+    VMAX = 0.8
+    n = len(MONTHS)
+    step = (PLOT_R - PLOT_L) / float(n)
+    def x_center(i):
+        return PLOT_L + step * (i + 0.5)
+    def y_at(v):
+        return PLOT_B + (v - VMIN) / (VMAX - VMIN) * (PLOT_T - PLOT_B)
+    ax.plot([PLOT_L, PLOT_R], [PLOT_B, PLOT_B], color=AXIS_LINE, linewidth=0.8, zorder=2)
+    for i in range(n):
+        xc = x_center(i)
+        yv = y_at(RATES[i])
+        ax.plot([xc, xc], [PLOT_B, yv], color=RED, linewidth=1.0, zorder=3)
+        ax.plot(
+            xc, yv,
+            marker="D", markersize=7.0,
+            markerfacecolor=DIAMOND_FACE,
+            markeredgecolor=RED,
+            markeredgewidth=1.6, zorder=5,
+        )
+        ax.text(
+            xc, yv + 12.0, "%.2f%%" % (RATES[i] * 100),
+            fontproperties=fp(9.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=7,
+        )
+        ax.text(
+            xc, PLOT_B - 16.0, MONTHS[i],
+            fontproperties=fp(9.5, False, "ea"),
+            color=LBL, ha="center", va="top", zorder=7,
+        )
+    fig.text(
+        0.048, 1.0 - (26.0) / H, "2022年1-8月公司计划完成率",
+        fontproperties=fp(18.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.048, 1.0 - (64.0) / H, "公司整体完成率55%，4月和8月超过70%，2月和6月较低未过",
+        fontproperties=fp(11.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.048, 1.0 - (88.0) / H, "半",
+        fontproperties=fp(11.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.048, 1.0 - (468.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.08.31",
+        fontproperties=fp(8.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart12_菱形走势图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

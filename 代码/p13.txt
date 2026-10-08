@@ -1,0 +1,159 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 500]
+BG = "#1A1E43"
+C21 = "#E74E69"
+C22 = "#2E9BE5"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+AXIS_TXT = "#8FAADC"
+NOTE = "#BFBFBF"
+GRID = "#3A3F6B"
+MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月"]
+Y21 = [1686, 1345, 1934, 1658, 1865, 1936]
+Y22 = [1385, 1846, 1654, 1936, 2564, 2236]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 80.0
+    PLOT_R = 600.0
+    PLOT_B = 90.0
+    PLOT_T = 340.0
+    VMAX = 3000.0
+    n = len(MONTHS)
+    step = (PLOT_R - PLOT_L) / float(n - 1)
+    def x_at(i):
+        return PLOT_L + step * i
+    def y_at(v):
+        return PLOT_B + v / VMAX * (PLOT_T - PLOT_B)
+    for v in [0, 500, 1000, 1500, 2000, 2500, 3000]:
+        yy = y_at(v)
+        ax.plot([PLOT_L, PLOT_R], [yy, yy],
+                color=GRID, linewidth=0.7, linestyle=(0, (3, 4)),
+                alpha=0.7, zorder=1)
+        ax.text(
+            PLOT_L - 14.0, yy, "{:,}".format(v),
+            fontproperties=fp(9.0, False, "num"),
+            color=AXIS_TXT, ha="right", va="center", zorder=7,
+        )
+    x = np.array([x_at(i) for i in range(n)], dtype=float)
+    y1 = np.array([y_at(v) for v in Y21], dtype=float)
+    y2 = np.array([y_at(v) for v in Y22], dtype=float)
+    ax.plot(x, y1, color=C21, linewidth=1.8, marker="o",
+            markersize=5.0, markerfacecolor=C21,
+            markeredgecolor=C21, zorder=4)
+    ax.plot(x, y2, color=C22, linewidth=1.8, marker="o",
+            markersize=5.0, markerfacecolor=C22,
+            markeredgecolor=C22, zorder=4)
+    for i in range(n):
+        if Y21[i] >= Y22[i]:
+            ax.text(
+                x[i], y1[i] + 12.0, "%d" % Y21[i],
+                fontproperties=fp(8.5, False, "num"),
+                color=TXT, ha="center", va="bottom", zorder=7,
+            )
+            ax.text(
+                x[i], y2[i] - 14.0, "%d" % Y22[i],
+                fontproperties=fp(8.5, False, "num"),
+                color=TXT, ha="center", va="top", zorder=7,
+            )
+        else:
+            ax.text(
+                x[i], y2[i] + 12.0, "%d" % Y22[i],
+                fontproperties=fp(8.5, False, "num"),
+                color=TXT, ha="center", va="bottom", zorder=7,
+            )
+            ax.text(
+                x[i], y1[i] - 14.0, "%d" % Y21[i],
+                fontproperties=fp(8.5, False, "num"),
+                color=TXT, ha="center", va="top", zorder=7,
+            )
+        ax.text(
+            x[i], PLOT_B - 16.0, MONTHS[i],
+            fontproperties=fp(9.5, False, "ea"),
+            color=LBL, ha="center", va="top", zorder=7,
+        )
+    leg_y = PLOT_T + 26.0
+    leg_x = PLOT_R - 180.0
+    ax.plot([leg_x, leg_x + 22.0], [leg_y, leg_y], color=C21, linewidth=1.8)
+    ax.plot(leg_x + 11.0, leg_y, marker="o", markersize=5.0,
+            markerfacecolor=C21, markeredgecolor=C21)
+    ax.text(leg_x + 28.0, leg_y, "2021年",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=7)
+    ax.plot([leg_x + 90.0, leg_x + 112.0], [leg_y, leg_y], color=C22, linewidth=1.8)
+    ax.plot(leg_x + 101.0, leg_y, marker="o", markersize=5.0,
+            markerfacecolor=C22, markeredgecolor=C22)
+    ax.text(leg_x + 118.0, leg_y, "2022年",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=7)
+    fig.text(
+        0.048, 1.0 - (26.0) / H, "2022年上半年各月同比去年销量",
+        fontproperties=fp(18.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.048, 1.0 - (62.0) / H, "上半年同比去年增长明显，5月份同比增长最多，增长近40%",
+        fontproperties=fp(11.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.048, 1.0 - (468.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.06.30",
+        fontproperties=fp(8.5, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart13_对比折线图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

@@ -1,0 +1,113 @@
+import os
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+try:
+    _BASE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _BASE = os.getcwd()
+DPI = 120.0
+SIZE_PX = [538, 332]
+W, H = SIZE_PX
+CARD = (26, 30, 67)
+PAGE = CARD
+BLUE = (0, 112, 192)
+PINK = (231, 78, 105)
+INK = (255, 255, 255)
+CARD_BOX = (0, 0, W, H)
+MSYH = "C:/Windows/Fonts/msyh.ttc"
+MSYHB = "C:/Windows/Fonts/msyhbd.ttc"
+CATS = ["华东", "西北", "东北", "华北", "华南"]
+V22 = [0.36, 0.31, 0.18, 0.13, 0.09]
+V21 = [0.42, 0.26, 0.19, 0.12, 0.05]
+TITLE = "2022年第一季度销售目标完成情况"
+SUB = "华东区域完成率最高达到36%，但是相比去年的42%有所下降"
+NOTE = "*注：数据来源于公司销售系统，统计日期截至2022.03.31"
+SZ_TITLE = 14.0 * DPI / 72.0
+SZ_SUB = 10.0 * DPI / 72.0
+SZ_LABEL = 8.0 * DPI / 72.0
+SZ_NOTE = 8.0 * DPI / 72.0
+STEP = 2.0
+CLIP_BLUE = 133.0
+CLIP_PINK = 156.0
+X_BLUE_RIGHT = 217.0
+X_PINK_LEFT = 306.0
+BAR_H = 16.0
+BAR_TOP0 = 127.0
+ROW_PITCH = 27.0
+ROW_CY = [BAR_TOP0 + BAR_H / 2.0 + ROW_PITCH * i for i in range(len(CATS))]
+S_COL_CX = (X_BLUE_RIGHT + X_PINK_LEFT) / 2.0
+TITLE_INK = (39.0, 42.5)
+SUB_INK = (38.0, 77.0)
+NOTE_INK = (25.0, 305.0)
+PCT_R = 80.0
+PCT_L = 466.0
+TXT_DY = 1.0
+GAMMA_TITLE = 0.75
+GAMMA_CAT = 1.15
+def ink_metrics(text, font, gamma=1.0):
+    tmp = Image.new("L", (int(font.size * len(text) * 2) + 200,
+                          int(font.size * 4) + 100), 0)
+    ImageDraw.Draw(tmp).text((100, 100), text, font=font, fill=255)
+    a = np.array(tmp).astype(float)
+    if gamma != 1.0:
+        a = 255.0 * (a / 255.0) ** gamma
+    ys, xs = np.where(a > 60)
+    return (float(xs.min() - 100), float(ys.min() - 100),
+            float(xs.max() - xs.min() + 1), float(ys.max() - ys.min() + 1))
+def put_ink(layer_draw, text, font, *, left=None, right=None, cx=None,
+            cy=None, gamma=1.0):
+    dx, dy, w, h = ink_metrics(text, font, gamma)
+    if left is not None:
+        x = left - dx
+    elif right is not None:
+        x = right - dx - w
+    else:
+        x = cx - dx - w / 2.0
+    layer_draw.text((x, cy - dy - h / 2.0 + TXT_DY), text, font=font, fill=255)
+def bar_length(n, clip):
+    return min(STEP * n - 1.0, clip)
+def composite(base, layer, gamma):
+    a = np.array(layer).astype(float) / 255.0
+    if gamma != 1.0:
+        a = a ** gamma
+    a = a[..., None]
+    return a * np.array(INK) + (1.0 - a) * base
+def draw():
+    img = Image.new("RGB", (W, H), PAGE)
+    dr = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = CARD_BOX
+    dr.rectangle((x0, y0, x1 - 1, y1 - 1), fill=CARD)
+    for i, cy in enumerate(ROW_CY):
+        yt = int(round(cy - BAR_H / 2.0))
+        yb = int(round(cy + BAR_H / 2.0)) - 1
+        n22 = int(round(V22[i] * 200.0))
+        w22 = bar_length(n22, CLIP_BLUE)
+        dr.rectangle((X_BLUE_RIGHT - w22, yt, X_BLUE_RIGHT - 1, yb), fill=BLUE)
+        n21 = int(round(V21[i] * 200.0))
+        w21 = bar_length(n21, CLIP_PINK)
+        dr.rectangle((X_PINK_LEFT, yt, X_PINK_LEFT + w21 - 1, yb), fill=PINK)
+    lay_norm = Image.new("L", (W, H), 0)
+    lay_title = Image.new("L", (W, H), 0)
+    lay_cat = Image.new("L", (W, H), 0)
+    dn, dt, dc = (ImageDraw.Draw(x) for x in (lay_norm, lay_title, lay_cat))
+    put_ink(dn, SUB, ImageFont.truetype(MSYH, SZ_SUB), left=SUB_INK[0], cy=SUB_INK[1])
+    put_ink(dn, NOTE, ImageFont.truetype(MSYH, SZ_NOTE), left=NOTE_INK[0], cy=NOTE_INK[1])
+    f_lab = ImageFont.truetype(MSYH, SZ_LABEL)
+    for i, cy in enumerate(ROW_CY):
+        put_ink(dn, "%d%%" % round(V22[i] * 100), f_lab, right=PCT_R, cy=cy)
+        put_ink(dn, "%d%%" % round(V21[i] * 100), f_lab, left=PCT_L, cy=cy)
+        put_ink(dc, CATS[i], f_lab, cx=S_COL_CX, cy=cy, gamma=GAMMA_CAT)
+    put_ink(dt, TITLE, ImageFont.truetype(MSYHB, SZ_TITLE),
+            left=TITLE_INK[0], cy=TITLE_INK[1], gamma=GAMMA_TITLE)
+    arr = np.array(img).astype(float)
+    arr = composite(arr, lay_norm, 1.0)
+    arr = composite(arr, lay_cat, GAMMA_CAT)
+    arr = composite(arr, lay_title, GAMMA_TITLE)
+    img = Image.fromarray(np.clip(arr, 0, 255).round().astype(np.uint8), "RGB")
+    out = os.path.join(_BASE, "png", "chart07_蝴蝶图.png")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    img.save(out, dpi=(DPI, DPI))
+    print("已输出:", out)
+    return out
+if __name__ == "__main__":
+    draw()

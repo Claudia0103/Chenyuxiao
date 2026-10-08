@@ -1,0 +1,109 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Circle, Rectangle
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [560, 500]
+BG = "#1A1E43"
+WATER = "#0070C0"
+RING = "#0070C0"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+RATE = 0.65
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.6, 1.2)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    cx, cy = 0.0, -0.2
+    R = 0.78
+    ax.add_patch(Circle(
+        (cx, cy), R + 0.05, facecolor="none",
+        edgecolor=RING, linewidth=1.2, zorder=3,
+    ))
+    ax.add_patch(Circle(
+        (cx, cy), R - 0.02, facecolor="none",
+        edgecolor=RING, linewidth=2.2, zorder=3,
+    ))
+    r_water = R - 0.02
+    clip = Circle((cx, cy), r_water, facecolor="none", edgecolor="none")
+    ax.add_patch(clip)
+    water_top = cy - R + 2.0 * R * RATE
+    water = Rectangle(
+        (cx - r_water, cy - R), 2.0 * r_water, water_top - (cy - R),
+        facecolor=WATER, edgecolor="none", zorder=2,
+    )
+    ax.add_patch(water)
+    water.set_clip_path(clip)
+    ax.text(
+        cx, cy - 0.08, "%d%%" % int(round(RATE * 100)),
+        fontproperties=fp(46.0, False, "num"),
+        color=TXT, ha="center", va="center", zorder=8,
+    )
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年目标完成率",
+        fontproperties=fp(18.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "截至6月30日销售目标总体完成率达到65%",
+        fontproperties=fp(11.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (468.0) / H, "*注：数据来源于公司销售系统",
+        fontproperties=fp(8.5, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart15_水球图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

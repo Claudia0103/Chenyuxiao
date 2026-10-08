@@ -1,0 +1,187 @@
+import os
+import re
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Polygon, Rectangle
+from matplotlib.ticker import FuncFormatter
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 507]
+PLOT_PX = [0.142031, 0.298817, 0.786203, 0.536489]
+YMAX = 10000.0
+YTICKS = [0, 2000, 4000, 6000, 8000, 10000]
+BG = "#1A1E43"
+GRID = "#454866"
+GRID_DASH = (5.4, 1.2)
+GRID_DASH_OFF = 0.0
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+NOTE = "#D9D9D9"
+CATS = ["口红", "面膜", "隔离", "防晒", "精华", "面霜", "眼影", "气垫"]
+VALS = [9221.0, 5102.0, 6571.0, 5760.0, 6321.0, 8612.0, 2645.0, 5321.0]
+COLS = ["#7BBDD5", "#49A098", "#E66B4C", "#FFC000",
+        "#0097E0", "#0070C0", "#4A5BD1", "#464CAC"]
+BARW = 0.5
+BLK_W, BLK_H = 38.0, 21.75
+BLK_DX = [2.14, 0.24, -0.66, 1.44, 1.53, 1.13, 1.73, 3.83]
+BLK_DY = [30.2, 34.2, 30.3, 30.3, 27.1, 28.8, 32.1, 32.3]
+ADJ1 = [-13789, 4179, -3064, 1346, -2415, 0, -3064, -3343]
+ADJ2 = [92665, 91141, 95321, 74448, 72170, 82929, 93550, 83808]
+CALLOUT_BASE = (0.196, 0.419)
+DLB_SZ = 6.8
+DLB_DY = 1.6
+NUM_SZ = 7.2
+XLAB_SZ = 8.0
+XLAB_PAD = 7.8
+YLAB_PAD = 8.6
+BLACK_ROW = 1
+_FONT_FILES = {
+    "lt": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_CJK_RE = re.compile(r"[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFF60]")
+_FP_CACHE = {}
+def fp(sz, bold=False, ea=False):
+    key = (round(float(sz), 2), bool(bold), bool(ea))
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES["ea" if ea else "lt"]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def fmtk(x, _=None):
+    return "%d" % int(round(x))
+TITLE_RUNS = [
+    {"sz": 18.0, "bold": True, "color": TXT, "lnspc": 24.0,
+     "runs": ["2021", "年商品销量情况"]},
+    {"sz": 12.0, "bold": False, "color": TXT, "lnspc": 24.0,
+     "runs": ["口红销量最好达", "9221", "，是眼影最低值", "2645", "近", "3.5", "倍"],
+     "run_dx": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+]
+NOTE_PARA = {
+    "sz": 8.0, "bold": False, "color": NOTE,
+    "runs": ["*", "注：数据来源于公司销售系统，统计日期截至", "2022.08.31"],
+    "run_dx": [0.0, 0.0, 0.0],
+}
+BOX_TITLE = [0.04779, 0.04899, 0.92831, 0.25734]
+BOX_NOTE = [0.03984, 0.92048, 0.84131, 0.98276]
+INSET_PT = (0.05, 0.05, 0.1, 0.1)
+TB_TWEAK = {0: [-8.24, 4.06], 1: [0.09]}
+def draw_textboxes(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)
+    def measure(text, sz, bold):
+        a = fig.text(0, 0, text, fontproperties=fp(sz, bold, ea=True), alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    boxes = [(BOX_TITLE, TITLE_RUNS), (BOX_NOTE, [NOTE_PARA])]
+    for bi, (box, paras) in enumerate(boxes):
+        x0, y0, x1, y1 = box
+        lI = INSET_PT[2] * DPI
+        tI = INSET_PT[0] * DPI
+        xL = x0 * W + lI
+        y = y0 * H + tI
+        for pi, p in enumerate(paras):
+            sz, bold = p["sz"], p["bold"]
+            em = sz * EM_PT
+            lh = (p.get("lnspc") or 1.71 * sz) * EM_PT
+            tw = TB_TWEAK.get(bi, [])
+            off = tw[pi] if pi < len(tw) else 0.0
+            ytop = y + 0.43 * em + off
+            x = xL
+            rdx = p.get("run_dx") or []
+            for ri, text in enumerate(p["runs"]):
+                xr = x + (rdx[ri] if ri < len(rdx) else 0.0)
+                fig.text(xr / W, 1.0 - ytop / H, text,
+                         fontproperties=fp(sz, bold, ea=True),
+                         color=p["color"], ha="left", va="top", zorder=30)
+                x += measure(text, sz, bold)
+            y += lh
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    px, py, pw, ph = PLOT_PX
+    ax = fig.add_axes([px, 1.0 - (py + ph), pw, ph])
+    ax.set_facecolor(BG)
+    ax.set_ylim(0, YMAX)
+    ax.set_xlim(-0.5, len(VALS) - 0.5)
+    for i, (v, c) in enumerate(zip(VALS, COLS)):
+        ax.bar(i, v, width=BARW, color=c, zorder=3, linewidth=0)
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color=GRID, linewidth=0.75,
+            linestyle=(GRID_DASH_OFF, GRID_DASH))
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.set_yticks(YTICKS)
+    ax.yaxis.set_major_formatter(FuncFormatter(fmtk))
+    ax.tick_params(axis="y", length=0, pad=YLAB_PAD, colors=LBL)
+    for lb in ax.get_yticklabels():
+        lb.set_fontproperties(fp(NUM_SZ, False, False))
+        lb.set_color(LBL)
+    ax.set_xticks(range(len(CATS)))
+    ax.tick_params(axis="x", length=0, pad=XLAB_PAD, colors=LBL)
+    ax.set_xticklabels(CATS, fontsize=XLAB_SZ, color=LBL)
+    for lb in ax.get_xticklabels():
+        lb.set_fontproperties(fp(XLAB_SZ, False, True))
+    inv = ax.transData.inverted()
+    def to_data(xp, yp):
+        return inv.transform((xp, H - yp))
+    dxu = (ax.get_xlim()[1] - ax.get_xlim()[0]) / (PLOT_PX[2] * W)
+    dyu = (ax.get_ylim()[1] - ax.get_ylim()[0]) / (PLOT_PX[3] * H)
+    for i, (v, c) in enumerate(zip(VALS, COLS)):
+        cx = (PLOT_PX[0] * W) + (PLOT_PX[2] * W) * (i + 0.5) / len(VALS)
+        ytop = PLOT_PX[1] * H + PLOT_PX[3] * H * (1.0 - v / YMAX)
+        bx = cx + BLK_DX[i] - BLK_W / 2.0
+        by = ytop - BLK_DY[i]
+        hc = bx + BLK_W / 2.0
+        vc = by + BLK_H / 2.0
+        tx = hc + BLK_W * ADJ1[i] / 100000.0
+        ty = vc + BLK_H * ADJ2[i] / 100000.0
+        f0, f1 = CALLOUT_BASE
+        if tx > hc:
+            f0, f1 = 1.0 - f1, 1.0 - f0
+        q0 = bx + BLK_W * f0
+        q1 = bx + BLK_W * f1
+        pts = [to_data(xp, yp) for xp, yp in (
+            (bx, by), (bx + BLK_W, by), (bx + BLK_W, by + BLK_H),
+            (q1, by + BLK_H), (tx, ty), (q0, by + BLK_H), (bx, by + BLK_H))]
+        ax.add_patch(Polygon(pts, closed=True, facecolor=c, edgecolor="none",
+                             zorder=5, clip_on=False))
+        mx, my = to_data(hc, vc + DLB_DY)
+        ax.text(mx, my, fmtk(v), fontproperties=fp(DLB_SZ, False, False),
+                color=LBL, ha="center", va="center", zorder=6)
+    draw_textboxes(fig, W, H)
+    fig.add_artist(Rectangle((0.0, 0.0), 1.0, BLACK_ROW / float(H),
+                             transform=fig.transFigure,
+                             facecolor="#000000", edgecolor="none", zorder=100))
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart04_标注柱形图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)
