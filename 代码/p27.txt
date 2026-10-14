@@ -1,0 +1,169 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 520]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+BLUE = "#1F7FD0"
+RED = "#D63851"
+GOLD = "#F0B03F"
+AXIS_LINE = "#8FAADC"
+REGIONS = ["华北", "华南", "东北", "西北", "西南", "华东"]
+Y22 = [2354, 1902, 3524, 2698, 2896, 2563]
+Y21 = [2021, 1563, 3213, 2531, 2631, 2361]
+YOY = [0.16, 0.22, 0.10, 0.07, 0.10, 0.09]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 70.0
+    PLOT_R = 610.0
+    PLOT_B = 90.0
+    PLOT_T = 310.0
+    V_SALES_MAX = 4400.0
+    V_YOY_MAX = 0.40
+    n = len(REGIONS)
+    step = (PLOT_R - PLOT_L) / float(n)
+    centers = [PLOT_L + step * (i + 0.5) for i in range(n)]
+    bar_w = step * 0.28
+    bar_gap = 8.0
+    def y_sales(v):
+        return PLOT_B + v / V_SALES_MAX * (PLOT_T - PLOT_B)
+    def y_yoy(v):
+        return PLOT_T + 10.0 + v / V_YOY_MAX * 90.0
+    for i in range(n):
+        xL = centers[i] - bar_w - bar_gap / 2.0
+        xR = centers[i] + bar_gap / 2.0
+        h22 = y_sales(Y22[i]) - PLOT_B
+        ax.add_patch(plt.Rectangle(
+            (xL, PLOT_B), bar_w, h22,
+            facecolor=BLUE, edgecolor="none", zorder=3,
+        ))
+        ax.text(
+            xL + bar_w / 2.0, PLOT_B + h22 + 8.0, "%d" % Y22[i],
+            fontproperties=fp(9.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+        h21 = y_sales(Y21[i]) - PLOT_B
+        ax.add_patch(plt.Rectangle(
+            (xR, PLOT_B), bar_w, h21,
+            facecolor=RED, edgecolor="none", zorder=3,
+        ))
+        ax.text(
+            xR + bar_w / 2.0, PLOT_B + h21 + 8.0, "%d" % Y21[i],
+            fontproperties=fp(9.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+        ax.text(
+            centers[i], PLOT_B - 18.0, REGIONS[i],
+            fontproperties=fp(11.0, False, "ea"),
+            color="#D9D9D9", ha="center", va="top", zorder=8,
+        )
+    gx = centers
+    gy = [y_yoy(v) for v in YOY]
+    ax.plot(gx, gy, color=GOLD, linewidth=1.6, zorder=5)
+    for i in range(n):
+        ax.plot(
+            gx[i], gy[i], marker="o", markersize=4.5,
+            markerfacecolor=GOLD, markeredgecolor=GOLD, zorder=6,
+        )
+        ax.text(
+            gx[i], gy[i] + 12.0, "%d%%" % int(round(YOY[i] * 100)),
+            fontproperties=fp(10.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+    ax.plot([PLOT_L, PLOT_R], [PLOT_B, PLOT_B], color=AXIS_LINE, linewidth=0.8, zorder=2)
+    leg_x = PLOT_R - 70.0
+    leg_y = PLOT_B + 90.0
+    box_w = 38.0
+    box_h = 24.0
+    ax.add_patch(plt.Rectangle(
+        (leg_x, leg_y - box_h / 2.0), box_w, box_h,
+        facecolor=BG, edgecolor=BLUE, linewidth=1.0, zorder=10,
+    ))
+    ax.text(leg_x + box_w / 2.0, leg_y + 5.0, "202",
+            fontproperties=fp(8.5, False, "num"),
+            color=TXT, ha="center", va="center", zorder=11)
+    ax.text(leg_x + box_w / 2.0, leg_y - 5.0, "2",
+            fontproperties=fp(8.5, False, "num"),
+            color=TXT, ha="center", va="center", zorder=11)
+    y2 = leg_y - 34.0
+    ax.add_patch(plt.Rectangle(
+        (leg_x, y2 - box_h / 2.0), box_w, box_h,
+        facecolor=BG, edgecolor=RED, linewidth=1.0, zorder=10,
+    ))
+    ax.text(leg_x + box_w / 2.0, y2 + 5.0, "202",
+            fontproperties=fp(8.5, False, "num"),
+            color=TXT, ha="center", va="center", zorder=11)
+    ax.text(leg_x + box_w / 2.0, y2 - 5.0, "1",
+            fontproperties=fp(8.5, False, "num"),
+            color=TXT, ha="center", va="center", zorder=11)
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "上半年各月商品销量同比去年情况",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (76.0) / H, "2022年相比于2021年销量都有提升，半年整体提升17%",
+        fontproperties=fp(11.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (495.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart27_簇状柱形折线图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

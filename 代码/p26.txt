@@ -1,0 +1,129 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 520]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+BAR = "#E84E6A"
+CIRC = "#1565A8"
+AXIS_LINE = "#8FAADC"
+REGIONS = ["华北", "华南", "东北", "西北", "西南", "华东"]
+SALES = [2354, 1902, 3524, 2698, 2896, 2563]
+YOY = [0.12, 0.25, 0.16, 0.21, 0.18, 0.25]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 70.0
+    PLOT_R = 610.0
+    PLOT_B = 80.0
+    PLOT_T = 330.0
+    VMAX = 4000.0
+    n = len(REGIONS)
+    step = (PLOT_R - PLOT_L) / float(n)
+    centers = [PLOT_L + step * (i + 0.5) for i in range(n)]
+    bar_w = step * 0.42
+    def y_of(v):
+        return PLOT_B + v / VMAX * (PLOT_T - PLOT_B)
+    r_min = 13.0
+    r_max = 22.0
+    yoy_min = min(YOY)
+    yoy_max = max(YOY)
+    for i in range(n):
+        x0 = centers[i] - bar_w / 2.0
+        h = y_of(SALES[i]) - PLOT_B
+        ax.add_patch(plt.Rectangle(
+            (x0, PLOT_B), bar_w, h,
+            facecolor=BAR, edgecolor="none", zorder=3,
+        ))
+        ax.text(
+            centers[i], PLOT_B + h + 10.0, "%d" % SALES[i],
+            fontproperties=fp(10.5, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+        t = (YOY[i] - yoy_min) / (yoy_max - yoy_min) if yoy_max > yoy_min else 0.5
+        r_i = r_min + t * (r_max - r_min)
+        ax.add_patch(plt.Circle(
+            (centers[i], PLOT_T + 50.0), r_i,
+            facecolor=CIRC, edgecolor="none", zorder=5,
+        ))
+        ax.text(
+            centers[i], PLOT_T + 50.0, "%d%%" % int(round(YOY[i] * 100)),
+            fontproperties=fp(10.0, False, "num"),
+            color=TXT, ha="center", va="center", zorder=8,
+        )
+        ax.text(
+            centers[i], PLOT_B - 18.0, REGIONS[i],
+            fontproperties=fp(11.0, False, "ea"),
+            color="#D9D9D9", ha="center", va="top", zorder=8,
+        )
+    ax.plot([PLOT_L, PLOT_R], [PLOT_B, PLOT_B], color=AXIS_LINE, linewidth=0.8, zorder=2)
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "各区域上半年销量以同比",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (76.0) / H, "东北区域销量持续保持第一，华东和华南同比去年增长最多",
+        fontproperties=fp(11.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (495.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart26_柱形圆.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

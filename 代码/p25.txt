@@ -1,0 +1,164 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 520]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+AXIS = "#8FAADC"
+C_PASS = "#A8BFD8"
+C_GOOD = "#2E9AA8"
+C_EXC = "#1F7FD0"
+C_ACT = "#0050E0"
+C_TGT = "#FFD400"
+ITEMS = ["口红", "面膜", "隔离", "防晒", "精华", "面霜"]
+ACTUAL = [653, 523, 648, 856, 714, 785]
+TARGET = [700, 500, 600, 900, 600, 600]
+PASS_V = [600, 600, 600, 600, 600, 600]
+GOOD_V = [200, 200, 200, 200, 200, 200]
+EXC_V = [200, 200, 200, 200, 200, 200]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 80.0
+    PLOT_R = 610.0
+    PLOT_B = 80.0
+    PLOT_T = 380.0
+    VMAX = 1200.0
+    n = len(ITEMS)
+    step = (PLOT_R - PLOT_L) / float(n)
+    centers = [PLOT_L + step * (i + 0.5) for i in range(n)]
+    bar_w = step * 0.45
+    def y_of(v):
+        return PLOT_B + v / VMAX * (PLOT_T - PLOT_B)
+    for v in range(0, int(VMAX) + 1, 200):
+        yy = y_of(v)
+        if v == 0:
+            ax.plot([PLOT_L, PLOT_R], [yy, yy], color="#2A2F55", linewidth=0.8, zorder=1)
+        ax.text(
+            PLOT_L - 12.0, yy, "%d" % v,
+            fontproperties=fp(10.0, False, "num"),
+            color=AXIS, ha="right", va="center", zorder=8,
+        )
+    for i in range(n):
+        x0 = centers[i] - bar_w / 2.0
+        ax.add_patch(plt.Rectangle(
+            (x0, PLOT_B), bar_w, y_of(PASS_V[i]) - PLOT_B,
+            facecolor=C_PASS, edgecolor="none", zorder=2,
+        ))
+        y1 = y_of(PASS_V[i] + GOOD_V[i])
+        ax.add_patch(plt.Rectangle(
+            (x0, y_of(PASS_V[i])), bar_w, y1 - y_of(PASS_V[i]),
+            facecolor=C_GOOD, edgecolor="none", zorder=2,
+        ))
+        y2 = y_of(PASS_V[i] + GOOD_V[i] + EXC_V[i])
+        ax.add_patch(plt.Rectangle(
+            (x0, y1), bar_w, y2 - y1,
+            facecolor=C_EXC, edgecolor="none", zorder=2,
+        ))
+        bar_w_act = bar_w * 0.42
+        xa = centers[i] - bar_w_act / 2.0
+        ax.add_patch(plt.Rectangle(
+            (xa, PLOT_B), bar_w_act, y_of(ACTUAL[i]) - PLOT_B,
+            facecolor=C_ACT, edgecolor="none", zorder=4,
+        ))
+        yt = y_of(TARGET[i])
+        x_t0 = centers[i] - bar_w * 0.35
+        x_t1 = centers[i] + bar_w * 0.35
+        ax.plot([x_t0, x_t1], [yt, yt], color=C_TGT, linewidth=2.0, zorder=5)
+        ax.text(
+            centers[i], PLOT_B - 16.0, ITEMS[i],
+            fontproperties=fp(11.0, False, "ea"),
+            color="#D9D9D9", ha="center", va="top", zorder=8,
+        )
+    leg_items = [
+        ("及格", C_PASS),
+        ("良好", C_GOOD),
+        ("优秀", C_EXC),
+        ("实际", C_ACT),
+        ("目标", C_TGT),
+    ]
+    leg_x = PLOT_L + 20.0
+    leg_y = y_of(1200.0)
+    gap = 75.0
+    for k, (name, col) in enumerate(leg_items):
+        lx = leg_x + k * gap
+        if name == "目标":
+            ax.plot([lx, lx + 14.0], [leg_y, leg_y], color=col, linewidth=2.0, zorder=10)
+        else:
+            ax.add_patch(plt.Rectangle(
+                (lx, leg_y - 6.0), 14.0, 12.0,
+                facecolor=col, edgecolor="none", zorder=10,
+            ))
+        ax.text(lx + 20.0, leg_y, name,
+                fontproperties=fp(10.0, False, "ea"),
+                color=TXT, ha="left", va="center", zorder=10)
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年各商品销量完成情况",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (76.0) / H, "防晒整体销量最好，达到856，面霜远超目标，超额完成30%",
+        fontproperties=fp(11.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (495.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart25_子弹图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

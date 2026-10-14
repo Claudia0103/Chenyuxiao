@@ -1,0 +1,170 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Wedge
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 560]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+AGES = ["[20,30)", ">=50", "[40,50)", "[30,40)"]
+RATES = [0.375, 0.125, 0.20833333333333334, 0.2916666666666667]
+COLORS = ["#5B2FB8", "#F2B63A", "#34BEC4", "#6E5BE8"]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.6, 1.2)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    cx, cy = 0.0, -0.25
+    r_in = 0.44
+    r_out = 0.72
+    total_w = r_out - r_in
+    n_rings_max = 5
+    gap_w = 0.004
+    ring_w = (total_w - gap_w * (n_rings_max - 1)) / n_rings_max
+    r_max_rate = max(RATES)
+    arcs = []
+    a0 = 90.0 - RATES[0] * 360.0
+    a1 = 90.0
+    arcs.append((a0, a1))
+    a0 = 90.0
+    a1 = 90.0 + RATES[1] * 360.0
+    arcs.append((a0, a1))
+    a0 = 90.0 + RATES[1] * 360.0
+    a1 = a0 + RATES[2] * 360.0
+    arcs.append((a0, a1))
+    a0 = 90.0 + (RATES[1] + RATES[2]) * 360.0
+    a1 = a0 + RATES[3] * 360.0
+    arcs.append((a0, a1))
+    for i in range(len(AGES)):
+        a0, a1 = arcs[i]
+        n_i = max(1, int(round(RATES[i] / r_max_rate * n_rings_max)))
+        for k in range(n_i):
+            r_inner_k = r_in + k * (ring_w + gap_w)
+            r_outer_k = r_inner_k + ring_w
+            ax.add_patch(Wedge(
+                (cx, cy), r_outer_k, a0, a1,
+                width=ring_w, facecolor=COLORS[i],
+                edgecolor="none", zorder=3 + k,
+            ))
+    label_cfg = [
+        {"x": 1.20, "y": 0.55, "ha": "left"},
+        {"x": -0.75, "y": -0.60, "ha": "right"},
+        {"x": -1.20, "y": -0.15, "ha": "right"},
+        {"x": 1.20, "y": -1.05, "ha": "left"},
+    ]
+    for i in range(len(AGES)):
+        a0, a1 = arcs[i]
+        mid = np.deg2rad((a0 + a1) / 2.0)
+        x_edge = cx + r_out * np.cos(mid)
+        y_edge = cy + r_out * np.sin(mid)
+        lx = label_cfg[i]["x"]
+        ly = label_cfg[i]["y"]
+        ha = label_cfg[i]["ha"]
+        sign_x = 1 if lx > cx else -1
+        sign_y = 1 if ly > cy else -1
+        if i == 1:
+            sign_x = -1
+            sign_y = 1
+        if i == 2:
+            sign_x = -1
+            sign_y = -1
+        x_dot = x_edge + sign_x * 0.02
+        y_dot = y_edge + sign_y * 0.02
+        x_bend = x_dot + sign_x * 0.18
+        y_bend = y_dot + sign_y * 0.18
+        x_end = lx + (-0.15 if lx < cx else 0.15)
+        y_end = y_bend
+        if i == 1:
+            y_dot -= 0.15
+            y_bend -= 0.15
+            y_end -= 0.15
+        ax.plot(
+            [x_dot, x_bend, x_end],
+            [y_dot, y_bend, y_end],
+            color=COLORS[i], linewidth=0.8, zorder=20,
+        )
+        ax.plot(
+            x_dot, y_dot, marker="o", markersize=3.5,
+            markerfacecolor=COLORS[i], markeredgecolor="none", zorder=21,
+        )
+        dy_text = 0.10
+        dy_num = 0.02
+        tx = (x_bend + x_end) / 2.0
+        ax.text(
+            tx, y_end + dy_text, AGES[i],
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="center", va="bottom", zorder=25,
+        )
+        ax.text(
+            tx, y_end + dy_num, "%.1f%%" % (RATES[i] * 100),
+            fontproperties=fp(10.0, False, "num"),
+            color=COLORS[i], ha="center", va="bottom", zorder=25,
+        )
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年各年龄段人数分布",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "公司平均年龄32.5，20-30员工比例最高占比37.5%",
+        fontproperties=fp(12.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (500.0) / H, "*注：数据来源于公司人力资源系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart20_南丁格尔圆环图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)
