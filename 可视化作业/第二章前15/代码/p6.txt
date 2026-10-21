@@ -1,0 +1,183 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 483]
+PLOT_F = [0.034313, 0.284856, 0.946078, 0.598456]
+VMAX = 8000.0
+BG = "#1A1E43"
+BLUE = "#0070C0"
+RED = "#E74E69"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+RLBL = "#D9D9D9"
+NOTE = "#D9D9D9"
+TOPB = "#0070C0"
+TOPR = "#F94C66"
+CATS = ["华东", "西北", "东北", "华北", "华南"]
+HEAD = [2238.0, 2132.0, 2027.0, 1922.0, 1215.0]
+Y22 = [1215.0, 1321.0, 1426.0, 1531.0, 2238.0]
+MID = 1215.0
+Y21 = [1003.0, 1265.0, 1531.0, 1436.0, 2066.0]
+BAR_FRAC = 1.0 / (1.0 + 150.0 / 100.0)
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def fmtk(x):
+    return "%d" % int(round(x))
+BOX_TITLE = [0.04749, 0.03947, 0.94456, 0.25902]
+BOX_NOTE = [0.04381, 0.90948, 0.84529, 0.98487]
+BOX_TOP = [0.32598, 0.2441, 0.78462, 0.29558]
+INSET_T = 0.05
+INSET_L = 0.10
+TITLE_LINES = [
+    {"sz": 18.0, "bold": True, "color": TXT, "fam": "ea", "lh_k": 1.702, "tweak": 0.25,
+     "runs": ["2022", "年上半年各区域对比去年销量"],
+     "run_dx": [0.0, 0.0]},
+    {"sz": 11.0, "bold": False, "color": TXT, "fam": "ea", "lh_k": 1.75, "tweak": 1.0,
+     "dx": -0.25,
+     "runs": ["2022", "年整体销量高于", "2021", "年，只有东北区域较", "2021", "有所下降"],
+     "run_dx": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+]
+NOTE_LINES = [
+    {"sz": 8.0, "bold": False, "color": NOTE, "fam": "ea", "lh_k": 1.75, "tweak": 0.0,
+     "runs": ["*", "注：数据来源于公司销售系统，统计日期截至", "2022.06.30"],
+     "run_dx": [0.0, 0.0, 2.2]},
+]
+def draw_textboxes(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)
+    def measure(text, sz, bold, fam):
+        a = fig.text(0, 0, text, fontproperties=fp(sz, bold, fam), alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    for box, lines in ((BOX_TITLE, TITLE_LINES), (BOX_NOTE, NOTE_LINES)):
+        x = box[0] * W + INSET_L * DPI
+        y = box[1] * H + INSET_T * DPI
+        for ln in lines:
+            sz, bold, fam = ln["sz"], ln["bold"], ln["fam"]
+            em = sz * EM_PT
+            xr0 = x + ln.get("dx", 0.0)
+            ytop = y + 0.43 * em + ln["tweak"]
+            for ri, text in enumerate(ln["runs"]):
+                rdx = ln.get("run_dx") or []
+                fig.text((xr0 + (rdx[ri] if ri < len(rdx) else 0.0)) / W, 1.0 - ytop / H, text,
+                         fontproperties=fp(sz, bold, fam),
+                         color=ln["color"], ha="left", va="top", zorder=30)
+                xr0 += measure(text, sz, bold, fam)
+            y += ln["lh_k"] * sz * EM_PT
+def draw_toplabel(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)
+    SZ = TOP_SZ
+    def measure(text):
+        a = fig.text(0, 0, text, fontproperties=fp(SZ, False, "cal"), alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    x0 = BOX_TOP[0] * W + INSET_L * DPI + TOP_DX
+    y0 = BOX_TOP[1] * H + INSET_T * DPI
+    ytop = y0 + TOP_DY
+    fig.text(x0 / W, 1.0 - ytop / H, "2022", fontproperties=fp(SZ, False, "cal"),
+             color=TOPB, ha="left", va="top", zorder=30)
+    x1 = x0 + measure("2022") + TOP_NSP * measure(" ")
+    fig.text(x1 / W, 1.0 - ytop / H, "2021", fontproperties=fp(SZ, False, "cal"),
+             color=TOPR, ha="left", va="top", zorder=30)
+_INV = [None]
+_GEO = {}
+def to_data(xp, yp):
+    return _INV[0].transform((xp, SIZE_PX[1] - yp))
+def x_px(v):
+    return PLOT_F[0] * SIZE_PX[0] + (v / VMAX) * (PLOT_F[2] * SIZE_PX[0])
+def y_px(cat_idx):
+    top = PLOT_F[1] * SIZE_PX[1]
+    h = PLOT_F[3] * SIZE_PX[1]
+    band = h / float(len(CATS))
+    return top + h - (cat_idx + 0.5) * band
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    px, py, pw, ph = PLOT_F
+    ax = fig.add_axes([px, 1.0 - (py + ph), pw, ph])
+    ax.set_facecolor(BG)
+    ypos = np.arange(len(CATS), dtype=float)
+    ax.set_ylim(-0.5, len(CATS) - 0.5)
+    ax.set_xlim(0.0, VMAX)
+    _INV[0] = ax.transData.inverted()
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    n = len(CATS)
+    left_head = np.array(HEAD, dtype=float)
+    left_red = left_head + np.array(Y22, dtype=float) + MID
+    ax.barh(ypos, Y22, height=BAR_FRAC, left=left_head,
+            color=BLUE, edgecolor="none", zorder=3)
+    ax.barh(ypos, Y21, height=BAR_FRAC, left=left_red,
+            color=RED, edgecolor="none", zorder=3)
+    for i in range(n):
+        yc = y_px(i)
+        tx, ty = to_data(x_px(HEAD[i]) + DLB_GAP_BL, yc + NUM_DY)
+        ax.text(tx, ty, fmtk(Y22[i]), fontproperties=fp(NUM_SZ, False, "num"),
+                color=LBL, ha="left", va="center", zorder=7)
+        tx, ty = to_data(x_px(HEAD[i] + Y22[i] + MID / 2.0), yc + CAT_DY)
+        ax.text(tx, ty, CATS[i], fontproperties=fp(CAT_SZ, False, "ea"),
+                color=LBL, ha="center", va="center", zorder=7)
+        tx, ty = to_data(x_px(HEAD[i] + Y22[i] + MID + Y21[i]) - DLB_GAP_RD, yc + NUM_DY)
+        ax.text(tx, ty, fmtk(Y21[i]), fontproperties=fp(NUM_SZ, False, "num"),
+                color=RLBL, ha="right", va="center", zorder=7)
+    draw_toplabel(fig, W, H)
+    draw_textboxes(fig, W, H)
+    return fig
+NUM_SZ = 7.0
+NUM_DY = 1.5
+CAT_SZ = 8.4
+CAT_DY = 0.5
+DLB_GAP_BL = 11.7
+DLB_GAP_RD = 11.0
+TOP_SZ = 11.0
+TOP_DY = 3.5
+TOP_DX = 0.5
+TOP_NSP = 33
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart06_蝴蝶图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

@@ -1,0 +1,66 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+FIXED_BLUE_TOTAL = 4321
+RED_BLOCK_WIDTH = 1080
+TOTAL_ROW_LEN = FIXED_BLUE_TOTAL + RED_BLOCK_WIDTH
+BG_COLOR = "#1A2044"
+COLOR_DARK_BLUE = "#003380"
+COLOR_LIGHT_BLUE = "#82A7D7"
+COLOR_RED = "#983747"
+WHITE = "#FFFFFF"
+regions = ["华东", "西南", "西北", "东北", "华南", "华北"]
+sales = [2109, 1369, 1872, 1536, 1946, 4321]
+yoy_text = ["-5.8%", "-17.9%", "-15.9%", "-9.3%", "-20.8%", "-13.6%"]
+bar_height = 0.62
+def draw():
+    fig = plt.figure(figsize=(11,8), dpi=DPI)
+    fig.patch.set_facecolor(BG_COLOR)
+    ax = fig.add_axes([0.045, 0.11, 0.91, 0.76])
+    ax.set_facecolor(BG_COLOR)
+    ypos = np.arange(len(regions))
+    ax.set_ylim(-0.5, len(regions)-0.5)
+    ax.set_xlim(0, TOTAL_ROW_LEN)
+    ax.invert_yaxis()  
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    light_blue_length = []
+    for val in sales:
+        length = FIXED_BLUE_TOTAL - val
+        if length < 0:
+            length = 0
+        light_blue_length.append(length)
+    ax.barh(ypos, sales, height=bar_height, color=COLOR_DARK_BLUE, zorder=3)
+    ax.barh(ypos, light_blue_length, left=sales, height=bar_height, color=COLOR_LIGHT_BLUE, zorder=2)
+    ax.barh(ypos, [RED_BLOCK_WIDTH]*len(regions), left=FIXED_BLUE_TOTAL, height=bar_height, color=COLOR_RED, zorder=2)
+    for i in range(len(regions)):
+        y = ypos[i]
+        ax.text(-130, y, regions[i], fontsize=14, color=WHITE, ha="right", va="center", fontfamily="Microsoft YaHei")
+        ax.text(sales[i] - 90, y, f"{sales[i]}", fontsize=14, color=WHITE, ha="right", va="center")
+        red_center_x = FIXED_BLUE_TOTAL + RED_BLOCK_WIDTH/2
+        ax.text(red_center_x, y, yoy_text[i], fontsize=14, color=WHITE, ha="center", va="center")
+    fig.text(0.045, 0.915, "2021年各区域销量及同比情况",
+             fontsize=28, color=WHITE, ha="left", weight="bold", fontfamily="Microsoft YaHei")
+    fig.text(0.045, 0.845, "各区域商品销量同比去年均有下降，其中华南下降最多，同比下降\n20.8%",
+             fontsize=15, color=WHITE, ha="left", fontfamily="Microsoft YaHei", linespacing=1.6)
+    fig.text(0.045, 0.045, "*注：数据来源于公司销售系统，统计日期截至2022.01.01",
+             fontsize=11, color="#dddddd", ha="left", fontfamily="Microsoft YaHei")
+    return fig
+if __name__ == "__main__":
+    fig = draw()
+    # 修改文件名：chart08_数值百分比.png
+    save_file = os.path.join(OUT, "chart08_数值百分比.png")
+    fig.savefig(save_file, dpi=DPI, facecolor=BG_COLOR, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+    print("✅ 图片已保存为：chart08_数值百分比.png")

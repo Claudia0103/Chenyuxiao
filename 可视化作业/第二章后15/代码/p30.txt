@@ -1,0 +1,146 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Circle
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 520]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+TRACK = "#5A5F7B"
+BAR = "#1F7FD0"
+DOT22 = "#1F7FD0"
+DOT21 = "#9AA0B8"
+REGIONS = ["华南", "华北", "东北", "西北", "华东"]
+R22 = [0.86, 0.74, 0.62, 0.51, 0.35]
+R21 = [0.92, 0.69, 0.53, 0.39, 0.45]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 120.0
+    PLOT_R = 590.0
+    PLOT_T = 370.0
+    PLOT_B = 80.0
+    n = len(REGIONS)
+    band = (PLOT_T - PLOT_B) / float(n)
+    track_h = band * 0.32
+    dot_r = track_h * 0.50
+    for i in range(n):
+        yc = PLOT_T - (i + 0.5) * band
+        ax.add_patch(plt.Rectangle(
+            (PLOT_L, yc - track_h / 2.0),
+            PLOT_R - PLOT_L, track_h,
+            facecolor=TRACK, edgecolor="none", zorder=2,
+        ))
+        x22 = PLOT_L + (PLOT_R - PLOT_L) * R22[i]
+        x21 = PLOT_L + (PLOT_R - PLOT_L) * R21[i]
+        x_max = max(x22, x21)
+        ax.add_patch(plt.Rectangle(
+            (PLOT_L, yc - track_h / 2.0),
+            x_max - PLOT_L, track_h,
+            facecolor=BAR, edgecolor="none", zorder=3,
+        ))
+        ax.add_patch(Circle(
+            (x22, yc), dot_r,
+            facecolor=DOT22, edgecolor=TXT, linewidth=1.2, zorder=5,
+        ))
+        ax.add_patch(Circle(
+            (x21, yc), dot_r,
+            facecolor=DOT21, edgecolor=TXT, linewidth=1.2, zorder=5,
+        ))
+        ax.text(
+            x22, yc + dot_r + 5.0,
+            "%d%%" % int(round(R22[i] * 100)),
+            fontproperties=fp(10.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+        ax.text(
+            PLOT_L - 20.0, yc, REGIONS[i],
+            fontproperties=fp(11.0, False, "ea"),
+            color="#D9D9D9", ha="right", va="center", zorder=8,
+        )
+    leg_x = PLOT_L - 80.0
+    leg_y = PLOT_T + 5.0
+    ax.add_patch(Circle((leg_x, leg_y), 6.0,
+                        facecolor=DOT22, edgecolor=TXT, linewidth=1.0, zorder=10))
+    ax.text(leg_x + 14.0, leg_y, "2022完成率",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=10)
+    ax.add_patch(Circle((leg_x + 110.0, leg_y), 6.0,
+                        facecolor=DOT21, edgecolor=TXT, linewidth=1.0, zorder=10))
+    ax.text(leg_x + 124.0, leg_y, "2021完成率",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=10)
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年销量目标达成率同比去年",
+        fontproperties=fp(19.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (56.0) / H, "情况",
+        fontproperties=fp(19.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (104.0) / H, "华南完成率最高达到86%，华东最低35%，其中华南和华东不及去年",
+        fontproperties=fp(11.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (495.0) / H, "*注：数据来源于公司销售系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart30_对比滑珠图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

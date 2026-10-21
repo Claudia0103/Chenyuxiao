@@ -1,0 +1,137 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Wedge
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 560]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+DEPTS = ["销售部", "采购部", "工程部", "财务部", "行政部", "人力部"]
+RATES = [0.292, 0.227, 0.175, 0.136, 0.103, 0.05]
+COLORS = ["#E84E6A", "#F0B03F", "#2BB8C4", "#3E9BE0", "#2E7FE0", "#7030A0"]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.6, 1.2)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    cx, cy = 0.0, -0.25
+    R_MAX = 0.95
+    rate_max = max(RATES)
+    overlap = 1.5
+    cur = 90.0
+    mids = []
+    radii = []
+    for i in range(len(DEPTS)):
+        span = RATES[i] * 360.0
+        a1 = cur + overlap / 2.0
+        a0 = cur - span - overlap / 2.0
+        R_i = RATES[i] / rate_max * R_MAX
+        ax.add_patch(Wedge(
+            (cx, cy), R_i, a0, a1,
+            facecolor=COLORS[i], edgecolor="none", zorder=3,
+        ))
+        mids.append(np.deg2rad((a0 + a1) / 2.0))
+        radii.append(R_i)
+        cur = cur - span
+    signs = [
+        (1, 1),
+        (1, -1),
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (-1, 1),
+    ]
+    for i in range(len(DEPTS)):
+        mid = mids[i]
+        R_i = radii[i] + 0.05
+        x_edge = cx + R_i * np.cos(mid)
+        y_edge = cy + R_i * np.sin(mid)
+        sx, sy = signs[i]
+        x_bend = x_edge + sx * 0.22
+        y_bend = y_edge + sy * 0.22
+        x_end = x_bend + sx * 0.32
+        y_end = y_bend
+        if i == 5:
+            x_edge += 0.02
+            y_edge += 0.20
+            x_bend += 0.02
+            y_bend += 0.20
+            x_end += 0.02
+            y_end += 0.20
+        ax.plot(
+            [x_edge, x_bend, x_end],
+            [y_edge, y_bend, y_end],
+            color=COLORS[i], linewidth=0.8, zorder=20,
+        )
+        ax.plot(
+            x_edge, y_edge, marker="o", markersize=3.5,
+            markerfacecolor=COLORS[i], markeredgecolor="none", zorder=21,
+        )
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2021年各部门人数分布",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "公司总人数1664，销售部人数最多451，占比29.2%",
+        fontproperties=fp(12.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (500.0) / H, "*注：数据来源于公司人力资源系统，统计日期截至2022.01.01",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart21_南丁格尔PPT.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

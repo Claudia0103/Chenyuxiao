@@ -1,0 +1,176 @@
+import os
+import re
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.ticker import FuncFormatter
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 483]
+PLOT_PX = [0.0882353, 0.2642642, 0.8088235, 0.5806152]
+YMAX = 6000.0
+BG = "#1A1E43"
+BLUE = "#0070C0"
+RED = "#E74E69"
+AXLN = "#454866"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+NOTE = "#D9D9D9"
+CATS = ["2021Q1", "Q2", "Q3", "Q4", "2022Q1", "Q2"]
+SALES = [3121.0, 4086.0, 4321.0, 4601.0, 4936.0, 4231.0]
+PROFIT = [1020.0, 1421.0, 1502.0, 1623.0, 1781.0, 1432.0]
+GAP, OVL, NSER = 219.0, 30.0, 2
+BAR_W = 1.0 / (NSER + GAP / 100.0 - (NSER - 1) * OVL / 100.0)
+BAR_LEAD = (GAP / 100.0) * BAR_W / 2.0
+BAR_STEP = BAR_W * (1.0 - OVL / 100.0)
+_FONT_FILES = {
+    "lt": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_CJK_RE = re.compile(r"[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFF60]")
+_FP_CACHE = {}
+def fp(sz, bold=False, ea=False):
+    key = (round(float(sz), 2), bool(bold), bool(ea))
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES["ea" if ea else "lt"]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def fmtk(x, _=None):
+    return "%d" % int(round(x))
+BOX_TITLE = [0.03921, 0.04719, 0.9761, 0.24583]
+BOX_NOTE = [0.02911, 0.91077, 0.83058, 0.97898]
+INSET_T = 0.05 / 1.0
+INSET_L = 0.10 / 1.0
+TITLE_LINES = [
+    {"sz": 20.0, "bold": True, "color": TXT, "lh_k": 1.75, "tweak": 0.25,
+     "runs": ["2021", "年至今", "季度", "销售额", "(", "万", ")", "和利润", "额"],
+     "run_dx": [0.0, 0.0, 0.0, 0.0, -0.5, 0.25, 0.5, 1.0, 2.0]},
+    {"sz": 20.0, "bold": True, "color": TXT, "lh_k": 1.75, "tweak": -0.15,
+     "runs": ["(", "万", ")"], "run_dx": [0.0, 0.0, 0.5]},
+    {"sz": 12.0, "bold": False, "color": TXT, "lh_k": 1.75, "tweak": -2.0,
+     "runs": ["2022", "年第二季度销售额首次出现下降，降幅达到", "15%"],
+     "run_dx": [0.0, 0.0, 0.25]},
+]
+NOTE_LINES = [
+    {"sz": 8.0, "bold": False, "color": NOTE, "lh_k": 1.75, "tweak": 0.4,
+     "runs": ["*", "注：数据来源于公司销售系统，统计日期截至", "2022.06.30"],
+     "run_dx": [0.0, 0.5, 2.75]},
+]
+def draw_textboxes(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)
+    def measure(text, sz, bold):
+        a = fig.text(0, 0, text, fontproperties=fp(sz, bold, ea=True), alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    for box, lines in ((BOX_TITLE, TITLE_LINES), (BOX_NOTE, NOTE_LINES)):
+        x0, y0 = box[0], box[1]
+        x = x0 * W + INSET_L * DPI
+        y = y0 * H + INSET_T * DPI
+        for ln in lines:
+            sz, bold = ln["sz"], ln["bold"]
+            em = sz * EM_PT
+            xr0 = x + ln.get("dx", 0.0)
+            ytop = y + 0.43 * em + ln["tweak"]
+            for ri, text in enumerate(ln["runs"]):
+                rdx = (ln.get("run_dx") or [])
+                fig.text((xr0 + (rdx[ri] if ri < len(rdx) else 0.0)) / W, 1.0 - ytop / H, text,
+                         fontproperties=fp(sz, bold, ea=True),
+                         color=ln["color"], ha="left", va="top", zorder=30)
+                xr0 += measure(text, sz, bold)
+            y += ln["lh_k"] * sz * EM_PT
+LEGEND = [
+    {"box": [0.79841, 0.51566, 0.89675, 0.55813], "color": BLUE, "lines": ["销售", "额"]},
+    {"box": [0.79749, 0.59030, 0.89583, 0.63278], "color": RED, "lines": ["利润", "额"]},
+]
+LEG_LH = 20.0
+def draw_legend(ax, W, H):
+    for g in LEGEND:
+        x0, y0, x1, y1 = g["box"]
+        (dx0, dy0) = to_data(x0 * W, y1 * H)
+        (dx1, dy1) = to_data(x1 * W, y0 * H)
+        ax.add_patch(plt.Rectangle((dx0, dy0), dx1 - dx0, dy1 - dy0,
+                                   facecolor=BG, edgecolor=g["color"],
+                                   linewidth=0.75, zorder=8, clip_on=False))
+        cx = (x0 + x1) / 2.0 * W
+        cy = (y0 + y1) / 2.0 * H
+        em = 8.0 * EM_PT
+        ytop = cy - LEG_LH + 0.43 * em
+        for k, text in enumerate(g["lines"]):
+            (tx, ty) = to_data(cx, ytop + k * LEG_LH + 0.43 * em)
+            ax.text(tx, ty, text, fontproperties=fp(8.0, False, True),
+                    color=LBL, ha="center", va="center", zorder=9, clip_on=False)
+_INV = [None]
+def to_data(xp, yp):
+    return _INV[0].transform((xp, SIZE_PX[1] - yp))
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    px, py, pw, ph = PLOT_PX
+    ax = fig.add_axes([px, 1.0 - (py + ph), pw, ph])
+    ax.set_facecolor(BG)
+    ax.set_ylim(0, YMAX)
+    ax.set_xlim(-0.5, len(CATS) - 0.5)
+    _INV[0] = ax.transData.inverted()
+    left = np.arange(len(CATS)) - 0.5 + BAR_LEAD
+    ax.bar(left, SALES, width=BAR_W, color=BLUE, edgecolor="none", zorder=3, align="edge")
+    ax.bar(left + BAR_STEP, PROFIT, width=BAR_W, color=RED, edgecolor="none", zorder=4, align="edge")
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(AXLN)
+    ax.spines["bottom"].set_linewidth(0.75)
+    ax.spines["bottom"].set_zorder(9)
+    ax.set_yticks([])
+    ax.set_xticks(range(len(CATS)))
+    ax.tick_params(axis="x", length=0, pad=XLAB_PAD, colors=LBL)
+    ax.set_xticklabels(CATS, fontsize=XLAB_SZ, color=LBL)
+    for lb in ax.get_xticklabels():
+        lb.set_fontproperties(fp(XLAB_SZ, False, False))
+    ybase_px = (PLOT_PX[1] + PLOT_PX[3]) * H
+    catw_px = PLOT_PX[2] * W / float(len(CATS))
+    for si, (vals, off) in enumerate(((SALES, 0.0), (PROFIT, BAR_STEP))):
+        for i, v in enumerate(vals):
+            cx_px = PLOT_PX[0] * W + (i + BAR_LEAD + off + BAR_W / 2.0) * catw_px
+            top_px = ybase_px - (v / YMAX) * (PLOT_PX[3] * H)
+            (tx, ty) = to_data(cx_px, top_px - DLBL_GAP + DLBL_DY_MANUAL.get((si, i), 0.0))
+            ax.text(tx, ty, fmtk(v), fontproperties=fp(DLBL_SZ, False, False),
+                    color=LBL, ha="center", va="center", zorder=7)
+    draw_legend(ax, W, H)
+    draw_textboxes(fig, W, H)
+    return fig
+XLAB_SZ = 7.0
+XLAB_PAD = 9.0
+DLBL_SZ = 7.1
+DLBL_GAP = 15.25
+DLBL_DY_MANUAL = {(1, 5): 0.0096096077918028412 * SIZE_PX[1]}
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart05_层叠柱形图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

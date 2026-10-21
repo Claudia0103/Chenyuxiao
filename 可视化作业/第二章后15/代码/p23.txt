@@ -1,0 +1,150 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 520]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+BLUE = "#1F7FD0"
+RED = "#E84E6A"
+YEARS = ["2017", "2018", "2019", "2020", "2021", "2022"]
+SALES = [1603, 2106, 2406, 3265, 3721, 3921]
+GROWTH = [0.27, 0.31, 0.14, 0.36, 0.14, 0.05]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 75.0
+    PLOT_R = 600.0
+    PLOT_B = 80.0
+    PLOT_T = 360.0
+    V_SALES_MAX = 5600.0
+    V_GROW_MAX = 1.20
+    GROW_OFFSET = 220.0
+    n = len(YEARS)
+    step = (PLOT_R - PLOT_L) / float(n)
+    centers = [PLOT_L + step * (i + 0.5) for i in range(n)]
+    bar_w = step * 0.35
+    def y_sales(v):
+        return PLOT_B + v / V_SALES_MAX * (PLOT_T - PLOT_B)
+    def y_grow(v):
+        return PLOT_B + v / V_GROW_MAX * (PLOT_T - PLOT_B) + GROW_OFFSET
+    for i in range(n):
+        x0 = centers[i] - bar_w / 2.0
+        h = y_sales(SALES[i]) - PLOT_B
+        ax.add_patch(plt.Rectangle(
+            (x0, PLOT_B), bar_w, h,
+            facecolor=BLUE, edgecolor="none", zorder=3,
+        ))
+        ax.text(
+            centers[i], PLOT_B + h + 10.0, "%d" % SALES[i],
+            fontproperties=fp(10.5, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+    gx = centers
+    gy = [y_grow(v) for v in GROWTH]
+    ax.plot(gx, gy, color=RED, linewidth=1.6, zorder=5)
+    for i in range(n):
+        ax.plot(
+            gx[i], gy[i], marker="o", markersize=4.5,
+            markerfacecolor=RED, markeredgecolor=RED, zorder=6,
+        )
+        ax.text(
+            gx[i], gy[i] + 14.0, "%d%%" % int(round(GROWTH[i] * 100)),
+            fontproperties=fp(10.0, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=8,
+        )
+    for i in range(n):
+        ax.text(
+            centers[i], PLOT_B - 16.0, YEARS[i],
+            fontproperties=fp(10.5, False, "num"),
+            color="#D9D9D9", ha="center", va="top", zorder=8,
+        )
+    leg_x = centers[3] + 30.0
+    leg_y = gy[3] + 10.0
+    ax.add_patch(plt.Rectangle(
+        (leg_x, leg_y - 6.0), 14.0, 12.0,
+        facecolor=BLUE, edgecolor="none", zorder=10,
+    ))
+    ax.text(leg_x + 20.0, leg_y, "销售量",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=10)
+    ax.plot(
+        [leg_x + 100.0, leg_x + 120.0], [leg_y, leg_y],
+        color=RED, linewidth=1.6, zorder=10,
+    )
+    ax.plot(
+        leg_x + 110.0, leg_y, marker="o", markersize=4.5,
+        markerfacecolor=RED, markeredgecolor=RED, zorder=10,
+    )
+    ax.text(leg_x + 126.0, leg_y, "同比",
+            fontproperties=fp(10.0, False, "ea"),
+            color=TXT, ha="left", va="center", zorder=10)
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "近六年销售量及增长率",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "平台销量近6年持续增长，但近两年增长率有所放缓",
+        fontproperties=fp(11.5, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (480.0) / H, "*注：数据来源于公司销售系统",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart23_柱形折线图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

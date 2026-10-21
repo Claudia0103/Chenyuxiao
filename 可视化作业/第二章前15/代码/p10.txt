@@ -1,0 +1,141 @@
+import os
+import numpy as np
+import matplotlib
+from datetime import datetime
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Rectangle
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [700, 520]
+BG = "#1A1E43"
+BAR_DONE = "#3B9DE8"
+BAR_REST = "#0B6FC4"
+TXT = "#FFFFFF"
+LBL = "#F2F2F2"
+GRID = "#FFFFFF"
+TASKS = [
+    ("制定计划", "2022-03-01", 11, 0.51),
+    ("方案设计", "2022-03-13", 8,  0.32),
+    ("资源调配", "2022-03-22", 10, 0.21),
+    ("第一阶段", "2022-04-02", 13, 0.85),
+    ("第二阶段", "2022-04-16", 24, 0.36),
+    ("第三阶段", "2022-05-11", 14, 0.68),
+    ("项目总结", "2022-05-26", 7,  0.68),
+]
+TICKS = [
+    "2022/3/1", "2022/3/16", "2022/3/31", "2022/4/15",
+    "2022/4/30", "2022/5/15", "2022/5/30", "2022/6/14",
+]
+TICK_DATES = [datetime.strptime(t, "%Y/%m/%d") for t in TICKS]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    PLOT_L = 105.0
+    PLOT_R = 660.0
+    PLOT_B = 55.0
+    PLOT_T = 420.0
+    d_min = min(TICK_DATES).toordinal()
+    d_max = max(TICK_DATES).toordinal()
+    span = float(d_max - d_min)
+    def d2x(d):
+        return PLOT_L + (d.toordinal() - d_min) / span * (PLOT_R - PLOT_L)
+    n = len(TASKS)
+    band = (PLOT_T - PLOT_B) / float(n)
+    bar_h = band * 0.42
+    for i in range(n):
+        name, s_str, days, done = TASKS[i]
+        s_dt = datetime.strptime(s_str, "%Y-%m-%d")
+        e_ord = s_dt.toordinal() + days
+        yc = PLOT_T - (i + 0.5) * band
+        y0 = yc - bar_h / 2.0
+        x0 = d2x(s_dt)
+        x1 = PLOT_L + (e_ord - d_min) / span * (PLOT_R - PLOT_L)
+        bw = x1 - x0
+        bw_done = bw * done
+        bw_rest = bw - bw_done
+        ax.add_patch(Rectangle(
+            (x0, y0), bw_done, bar_h,
+            facecolor=BAR_DONE, edgecolor="none", zorder=4,
+        ))
+        ax.add_patch(Rectangle(
+            (x0 + bw_done, y0), bw_rest, bar_h,
+            facecolor=BAR_REST, edgecolor="none", zorder=4,
+        ))
+        ax.text(
+            PLOT_L - 10.0, yc, name,
+            fontproperties=fp(10.0, False, "ea"),
+            color=LBL, ha="right", va="center", zorder=7,
+        )
+        ax.text(
+            x0 + bw / 2.0, yc, "%d%%" % int(round(done * 100)),
+            fontproperties=fp(9.0, False, "num"),
+            color=TXT, ha="center", va="center", zorder=8,
+        )
+    for i, t in enumerate(TICK_DATES):
+        x = d2x(t)
+        ax.plot(
+            [x, x], [PLOT_B, PLOT_T],
+            color=GRID, linewidth=0.7, linestyle=(0, (3, 4)),
+            alpha=0.55, zorder=2,
+        )
+        ax.text(
+            x, PLOT_T + 12.0, TICKS[i],
+            fontproperties=fp(8.5, False, "num"),
+            color=TXT, ha="center", va="bottom", zorder=7,
+        )
+    fig.text(
+        0.5, 1.0 - (22.0) / H, "2022年化妆品类目采购项目进度",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="center", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart10_甘特图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

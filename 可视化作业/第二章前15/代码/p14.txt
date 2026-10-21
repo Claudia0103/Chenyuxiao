@@ -1,0 +1,138 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Wedge
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [560, 500]
+BG = "#1A1E43"
+TRACK = "#252A52"
+GRAY_GAP = "#4A4F6B"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+RATE = 0.85
+REST_V = 1.0 - RATE
+GAP_CENTER_DEG = 120.0
+GAP_SPAN_DEG = 360.0 * REST_V
+C_PURPLE = (0.55, 0.30, 0.75)
+C_PINK = (0.90, 0.25, 0.55)
+C_RED = (0.93, 0.30, 0.40)
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def lerp(c1, c2, t):
+    return tuple(c1[i] + (c2[i] - c1[i]) * t for i in range(3))
+def grad_color(t):
+    if t < 0.5:
+        return lerp(C_PURPLE, C_PINK, t / 0.5)
+    return lerp(C_PINK, C_RED, (t - 0.5) / 0.5)
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.6, 1.2)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    r_out = 0.72
+    r_in = 0.64
+    ring_w = r_out - r_in
+    r_gap_out = r_out - 0.03
+    r_gap_in = r_in + 0.01
+    cx, cy = 0.0, -0.2
+    gap_a0 = GAP_CENTER_DEG - GAP_SPAN_DEG / 2.0
+    gap_a1 = GAP_CENTER_DEG + GAP_SPAN_DEG / 2.0
+    start_deg = gap_a1
+    rate_deg = 360.0 * RATE
+    ax.add_patch(Wedge(
+        (cx, cy), r_out, 0, 360,
+        width=ring_w, facecolor=TRACK, edgecolor="none", zorder=2,
+    ))
+    ax.add_patch(Wedge(
+        (cx, cy), r_gap_out, gap_a0, gap_a1,
+        width=r_gap_out - r_gap_in,
+        facecolor=GRAY_GAP, edgecolor="none", zorder=3,
+    ))
+    seg_n = 240
+    deg_per = rate_deg / seg_n
+    for i in range(seg_n):
+        a0 = start_deg - i * deg_per
+        a1 = start_deg - (i + 1) * deg_per
+        t = i / float(seg_n - 1) if seg_n > 1 else 0.0
+        col = grad_color(t)
+        ax.add_patch(Wedge(
+            (cx, cy), r_out, a1, a0,
+            width=ring_w, facecolor=col, edgecolor="none", zorder=4,
+        ))
+
+    ax.text(
+        cx, cy + 0.02, "%d%%" % int(round(RATE * 100)),
+        fontproperties=fp(40.0, False, "num"),
+        color=TXT, ha="center", va="center", zorder=8,
+    )
+    ax.text(
+        cx, cy - 0.24, "目标完成率",
+        fontproperties=fp(13.0, False, "ea"),
+        color=TXT, ha="center", va="center", zorder=8,
+    )
+
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年目标完成率",
+        fontproperties=fp(18.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "截至6月30日销售目标总体完成率达到85%",
+        fontproperties=fp(11.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (468.0) / H, "*注：数据来源于公司销售系统",
+        fontproperties=fp(8.5, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart14_单值圆环图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

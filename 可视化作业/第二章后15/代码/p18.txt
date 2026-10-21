@@ -1,0 +1,110 @@
+import os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Wedge
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [640, 560]
+BG = "#1A1E43"
+TXT = "#FFFFFF"
+NOTE = "#BFBFBF"
+DEPTS = ["销售部", "采购部", "工程部", "财务部", "行政部", "人力部"]
+NUMS = [451, 326, 293, 238, 226, 130]
+COLORS = ["#E84E6A", "#F0B03F", "#2BB8C4", "#2E7FE0", "#1F5FB0", "#7030A0"]
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "cal": {"n": "C:/Windows/Fonts/calibri.ttf", "b": "C:/Windows/Fonts/calibrib.ttf"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_FP_CACHE = {}
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.6, 1.2)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    cx, cy = 0.0, -0.10
+    r_outer = 0.80
+    ring_w = 0.05
+    gap = 0.025
+    start_deg = 90.0
+    FULL = 773.1
+    for i in range(len(DEPTS)):
+        r_o = r_outer - i * (ring_w + gap)
+        span = NUMS[i] / FULL * 360.0
+        a0 = start_deg - span
+        a1 = start_deg
+        ax.add_patch(Wedge(
+            (cx, cy), r_o, a0, a1,
+            width=ring_w, facecolor=COLORS[i],
+            edgecolor="none", zorder=3 + i,
+        ))
+    for i in range(len(DEPTS)):
+        r_o = r_outer - i * (ring_w + gap)
+        lx = cx - 0.06
+        ly = cy + r_o - ring_w / 2.0
+        ax.text(
+            lx, ly, "%s %d" % (DEPTS[i], NUMS[i]),
+            fontproperties=fp(9.5, False, "ea"),
+            color=TXT, ha="right", va="center", zorder=10,
+        )
+
+    fig.text(
+        0.06, 1.0 - (28.0) / H, "2022年上半年各部门人数",
+        fontproperties=fp(20.0, True, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (62.0) / H, "公司总人数1664，销售部人数最多451，占比27%",
+        fontproperties=fp(12.0, False, "ea"),
+        color=TXT, ha="left", va="top", zorder=30,
+    )
+    fig.text(
+        0.06, 1.0 - (500.0) / H, "*注：数据来源于公司人力资源系统，统计日期截至2022.06.30",
+        fontproperties=fp(9.0, False, "ea"),
+        color=NOTE, ha="left", va="top", zorder=30,
+    )
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart18_跑道图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

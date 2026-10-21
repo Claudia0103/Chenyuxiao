@@ -1,0 +1,202 @@
+import os
+import re
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:                      
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+DPI = 120.0                
+EM_PT = DPI / 72.0        
+SIZE_PX = [640, 507]        
+PLOT_PX = [0.0588, 0.2344, 0.9047, 0.5999]   
+BG = "#1A1E43"             
+BLUE = "#0070C0"            
+AMBER = "#FFC000"           
+TXT = "#FFFFFF"           
+LBL = "#F2F2F2"             
+NOTE = "#D9D9D9"           
+AXLN = "#86889A"          
+CATS = ["华北", "华南", "东北", "西北", "西南", "华东"]         
+VALS = [2354.0, 1902.0, 3524.0, 2698.0, 2896.0, 2563.0]       
+_FONT_FILES = {
+    "lt": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+_CJK_RE = re.compile(r"[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFF60]")
+_FP_CACHE = {}
+def fp(sz, bold=False, ea=False):
+    key = (round(float(sz), 2), bool(bold), bool(ea))
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES["ea" if ea else "lt"]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+def mixed(target, x, y, s, fontsize=9, color=LBL, bold=False,
+          ha="center", va="bottom", zorder=10):
+    spans = []
+    for ch in str(s):
+        cjk = bool(_CJK_RE.match(ch))
+        if spans and spans[-1][1] == cjk:
+            spans[-1][0] += ch
+        else:
+            spans.append([ch, cjk])
+    if len(spans) == 1:
+        t, cjk = spans[0]
+        return [target.text(x, y, t, fontproperties=fp(fontsize, bold, cjk),
+                            color=color, ha=ha, va=va, zorder=zorder)]
+    renderer = target.figure.canvas.get_renderer()
+    ws = []
+    for t, cjk in spans:
+        a = target.text(0, 0, t, fontproperties=fp(fontsize, bold, cjk), alpha=0)
+        ws.append(a.get_window_extent(renderer).width)
+        a.remove()
+    tr = target.transData
+    ax_, ay_ = tr.transform((x, y))
+    x0 = ax_ - sum(ws) / 2.0 if ha == "center" else ax_
+    inv = tr.inverted()
+    out = []
+    for (t, cjk), w in zip(spans, ws):
+        fx, fy = inv.transform((x0 + w / 2.0, ay_))
+        out.append(target.text(fx, fy, t, fontproperties=fp(fontsize, bold, cjk),
+                               color=color, ha="center", va=va, zorder=zorder))
+        x0 += w
+    return out
+def fmtk(x, _=None):
+    return "%d" % int(round(x))
+def px2data(ax, rect=None):
+    x0, y0, w, h = rect if rect else PLOT_PX_PX()
+    xa, xb = ax.get_xlim()
+    ya, yb = ax.get_ylim()
+    return (xb - xa) / w, (yb - ya) / h
+def PLOT_PX_PX():
+    W, H = SIZE_PX
+    x, y, w, h = PLOT_PX
+    return [x * W, y * H, w * W, h * H]
+TITLE_RUNS = [               
+    {   
+        "sz": 20.0, "bold": True, "color": TXT, "lnspc": 24.0,
+        "runs": ["3", "月各区域销量分布"],
+    },
+    {   
+        "sz": 14.0, "bold": False, "color": TXT, "lnspc": 24.0,
+        "runs": ["东北销量最多占比总销量的", "22%", "，华南销量最低"],
+    },
+]
+NOTE_PARA = {                    
+    "sz": 8.0, "bold": False, "color": NOTE,
+    "runs": [" *", "注：数据来源于公司销售系统，统计日期", "截至", "2022.03.31"],
+    "run_dx": [0.0, 0.0, 1.5, 2.5],
+}
+AVG_PARA = {                     
+    "sz": 8.0, "bold": False, "color": AMBER,
+    "runs": ["平均值：", "2656"],
+}
+BOX_TITLE = [0.04882, 0.04231, 0.86893, 0.23078]
+BOX_NOTE = [0.03844, 0.91398, 0.84361, 0.97886]
+BOX_AVG = [0.79389, 0.36311, 0.97243, 0.42629]
+INSET_PT = (0.05, 0.05, 0.1, 0.1)    # tIns, bIns, lIns, rIns（英寸）—— DrawingML 默认值
+TB_TWEAK = {0: [-12.8, -1.2], 1: [0.0], 2: [0.0]}
+def draw_textboxes(fig, W, H):
+    renderer = fig.canvas.get_renderer()
+    SC = DPI / float(fig.dpi)          
+    def measure(text, sz, bold):
+        a = fig.text(0, 0, text, fontproperties=fp(sz, bold, ea=True),
+                     alpha=0, zorder=-1)
+        w = a.get_window_extent(renderer).width * SC
+        a.remove()
+        return w
+    boxes = [
+        (BOX_TITLE, TITLE_RUNS),
+        (BOX_NOTE, [NOTE_PARA]),
+        (BOX_AVG, [AVG_PARA]),
+    ]
+    for bi, (box, paras) in enumerate(boxes):
+        x0, y0, x1, y1 = box
+        lI = INSET_PT[2] * DPI                 
+        tI = INSET_PT[0] * DPI             
+        xL = x0 * W + lI
+        y = y0 * H + tI                       
+        for pi, p in enumerate(paras):
+            sz, bold = p["sz"], p["bold"]
+            em = sz * EM_PT
+            lh = (p.get("lnspc") or 1.71 * sz) * EM_PT
+            off = TB_TWEAK.get(bi, [0.0] * 9)[pi] if pi < len(TB_TWEAK.get(bi, [])) else 0.0
+            ytop = y + 0.43 * em + off        
+            x = xL
+            rdx = p.get("run_dx") or []
+            for ri, text in enumerate(p["runs"]):
+                xr = x + (rdx[ri] if ri < len(rdx) else 0.0)
+                fig.text(xr / W, 1.0 - ytop / H, text,
+                         fontproperties=fp(sz, bold, ea=True),  
+                         color=p["color"], ha="left", va="top", zorder=30)
+                x += measure(text, sz, bold)
+            y += lh
+YMAX = 4000.0            
+BAR_W = 0.3135             
+LABEL_DY = 115.0         
+DLABEL_TWEAK = {5: [1.6, 24.8]}
+XLAB_PAD = 6.9             XLAB_SZ = 9.0            
+AVG_LW = 1.2                
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    px, py, pw, ph = PLOT_PX
+    ax = fig.add_axes([px, 1.0 - (py + ph), pw, ph])
+    ax.set_facecolor(BG)
+    ax.set_ylim(0, YMAX)
+    ax.set_xlim(-0.5, len(VALS) - 0.5)
+    dxu, dyu = px2data(ax)
+    for i, v in enumerate(VALS):
+        ax.bar(i, v, width=BAR_W, color=BLUE, linewidth=0, zorder=3)
+        o = DLABEL_TWEAK.get(i)
+        xa, ya = i, v + LABEL_DY
+        if o:
+            xa += o[0] * dxu
+            ya -= o[1] * dyu
+        mixed(ax, xa, ya, fmtk(v), fontsize=9, color=LBL,
+              bold=False, ha="center", va="bottom")
+    avg = float(np.mean(VALS))
+    ax.plot([0, len(VALS) - 1], [avg, avg], color=AMBER, lw=AVG_LW,
+            solid_capstyle="round", zorder=4)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(AXLN)
+    ax.spines["bottom"].set_linewidth(0.75)
+    ax.spines["bottom"].set_capstyle("butt")
+    ax.set_yticks([0, 1000, 2000, 3000, 4000])
+    ax.tick_params(axis="y", length=0, labelleft=False)
+    ax.tick_params(axis="x", length=0, pad=XLAB_PAD, colors=LBL)
+    ax.set_axisbelow(True)
+    ax.set_xticks(range(len(CATS)))
+    ax.set_xticklabels(CATS, fontsize=XLAB_SZ, color=LBL)
+    for lb in ax.get_xticklabels():
+        lb.set_fontproperties(fp(XLAB_SZ, False, True))
+    draw_textboxes(fig, W, H)
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chart02_带均值柱形图.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)

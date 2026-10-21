@@ -1,0 +1,194 @@
+import os
+import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager as fm
+from matplotlib.patches import Rectangle, Wedge
+
+try:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    HERE = os.path.abspath(os.getcwd())
+OUT = os.path.join(HERE, "png")
+os.makedirs(OUT, exist_ok=True)
+
+DPI = 120.0
+EM_PT = DPI / 72.0
+SIZE_PX = [900, 540]
+
+BG = "#252D5C"          
+CARD_BG = "#1A1E43"     
+TXT = "#FFFFFF"         
+LBL = "#D9D9D9"         
+C_BLUE = "#2E9BE5"      
+C_YELLOW = "#F0B03F"    
+C_LBLUE = "#76C9F7"     
+
+# 原图的5个颜色
+C_AGE = ["#1F8BE0", "#ED7D31", "#6FC0ED", "#F2B63A", "#2E75B6"]
+
+_FONT_FILES = {
+    "ea": {"n": "C:/Windows/Fonts/msyh.ttc", "b": "C:/Windows/Fonts/msyhbd.ttc"},
+    "num": {"n": "C:/Windows/Fonts/arial.ttf", "b": "C:/Windows/Fonts/arialbd.ttf"},
+}
+for _d in _FONT_FILES.values():
+    for _p in _d.values():
+        try:
+            fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+
+_FP_CACHE = {}
+
+def fp(sz, bold=False, fam="ea"):
+    key = (round(float(sz), 2), bool(bold), fam)
+    p = _FP_CACHE.get(key)
+    if p is None:
+        p = fm.FontProperties(fname=_FONT_FILES[fam]["b" if bold else "n"])
+        p.set_size(sz)
+        _FP_CACHE[key] = p
+    return p
+
+def draw_pie_manual(ax, cx, cy, r_out, r_in, vals, colors):
+    total = sum(vals)
+    start_angle = 90.0 # 从12点方向开始
+    
+    for i, (val, color) in enumerate(zip(vals, colors)):
+        span = (val / total) * 360.0
+        end_angle = start_angle - span
+        
+        # 画圆环的一部分
+        ax.add_patch(Wedge(
+            (cx, cy), r_out, end_angle, start_angle, 
+            width=r_out - r_in, facecolor=color, edgecolor="none", zorder=4
+        ))
+        
+        # 计算文字坐标
+        mid_angle = np.deg2rad(start_angle - span / 2)
+        text_r = r_out + 12 # 文字离圆环的距离（靠近一点点）
+        tx = cx + text_r * np.cos(mid_angle)
+        ty = cy + text_r * np.sin(mid_angle)
+        
+        # 文本显示（字号 8.0）
+        ax.text(tx, ty, f"{val}%", fontproperties=fp(8.0, False, "num"), 
+                color=TXT, ha="center", va="center", zorder=10)
+        
+        start_angle = end_angle
+
+def draw():
+    W, H = SIZE_PX
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI)
+    fig.patch.set_facecolor(BG)
+    
+    # 锁定严格像素比例，绝对不扭曲
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(0, H)
+    ax.set_aspect("equal")
+    ax.set_facecolor(BG)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    fig.text(0.5, 1.0 - 5.0 / H, "公司人员结构看",
+             fontproperties=fp(22.0, True, "ea"),
+             color=TXT, ha="center", va="top", zorder=30)
+
+    def card(x, y, w, h, title):
+        ax.add_patch(Rectangle((x, y), w, h, facecolor=CARD_BG, edgecolor="none", zorder=2))
+        ax.text(x + w / 2.0, y + h - 15.0, title,
+                fontproperties=fp(13.0, True, "ea"), color=TXT, ha="center", va="top", zorder=8)
+
+    # ===== 第一行 =====
+    cw1, ch1 = 270, 210
+    y1 = 290
+
+    # 1. 年龄
+    card(20, y1, cw1, ch1, "年龄")
+    age_labels = ["18-24", "25-29", "30-34", "35-39", "40=<"]
+    age_vals = [7, 16, 22, 20, 35]
+    
+    draw_pie_manual(ax, 100, y1 + ch1/2 - 5, 55, 35, age_vals, C_AGE)
+    
+    for i, (lbl, c) in enumerate(zip(age_labels, C_AGE)):
+        ly = y1 + ch1 - 50 - i * 24
+        ax.add_patch(Rectangle((20 + cw1 - 80, ly - 4), 8, 8, facecolor=c, edgecolor="none", zorder=8))
+        ax.text(20 + cw1 - 62, ly, lbl, fontproperties=fp(10.0, False, "ea"), color=TXT, ha="left", va="center", zorder=8)
+
+    # 2. 性别
+    card(310, y1, cw1, ch1, "性别")
+    gender_labels = ["男", "女"]
+    gender_vals = [60, 40]
+    gender_colors = [C_YELLOW, C_BLUE]
+    
+    draw_pie_manual(ax, 390, y1 + ch1/2 - 5, 55, 35, gender_vals, gender_colors)
+    
+    for i, (lbl, c) in enumerate(zip(gender_labels, gender_colors)):
+        ly = y1 + ch1 - 80 - i * 24
+        ax.add_patch(Rectangle((310 + cw1 - 80, ly - 4), 8, 8, facecolor=c, edgecolor="none", zorder=8))
+        ax.text(310 + cw1 - 62, ly, lbl, fontproperties=fp(10.0, False, "ea"), color=TXT, ha="left", va="center", zorder=8)
+
+    # 3. 婚姻状况
+    card(600, y1, cw1, ch1, "婚姻状况")
+    mar_labels = ["单身", "已婚", "离异"]
+    mar_vals = [32, 46, 22]
+    mar_colors = [C_YELLOW, C_BLUE, C_LBLUE]
+    
+    draw_pie_manual(ax, 680, y1 + ch1/2 - 5, 55, 35, mar_vals, mar_colors)
+    
+    for i, (lbl, c) in enumerate(zip(mar_labels, mar_colors)):
+        ly = y1 + ch1 - 80 - i * 24
+        ax.add_patch(Rectangle((600 + cw1 - 80, ly - 4), 8, 8, facecolor=c, edgecolor="none", zorder=8))
+        ax.text(600 + cw1 - 62, ly, lbl, fontproperties=fp(10.0, False, "ea"), color=TXT, ha="left", va="center", zorder=8)
+
+    # ===== 第二行 =====
+    cw2, ch2 = 270, 210
+    y2 = 50
+
+    # 4. 学历
+    card(20, y2, cw2, ch2, "学历")
+    edu_labels = ["博士研究生", "硕士研究生", "本科", "专科", "专科以下"]
+    edu_vals = [48, 398, 572, 170, 282]
+    
+    for i, (lbl, val) in enumerate(zip(edu_labels, edu_vals)):
+        yc = y2 + 120 - i * 22
+        ax.text(115, yc, lbl, fontproperties=fp(9.5, False, "ea"), color=TXT, ha="right", va="center", zorder=8)
+        bw = val / max(edu_vals) * 110
+        ax.add_patch(Rectangle((125, yc - 6), bw, 12, facecolor=C_LBLUE, edgecolor="none", zorder=5))
+        ax.text(125 + bw + 6, yc, str(val), fontproperties=fp(9.5, False, "num"), color=TXT, ha="left", va="center", zorder=8)
+    card(310, y2, cw2, ch2, "总人数: 147")
+    ax.text(310 + cw2 / 2, y2 + ch2 - 60, "入转调", fontproperties=fp(11.0, True, "ea"), color=TXT, ha="center", va="center", zorder=8)
+    turn_labels = ["入职", "转入", "转出"]
+    turn_vals = [40, 5, 5]
+    for i, (lbl, val) in enumerate(zip(turn_labels, turn_vals)):
+        bx = 350 + i * 70
+        bh = val / max(turn_vals) * 100
+        ax.add_patch(Rectangle((bx, y2 + 40), 24, bh, facecolor=C_LBLUE, edgecolor="none", zorder=5))
+        ax.text(bx + 12, y2 + 40 + bh + 5, str(val), fontproperties=fp(9.5, False, "num"), color=TXT, ha="center", va="bottom", zorder=8)
+        ax.text(bx + 12, y2 + 25, lbl, fontproperties=fp(9.5, False, "ea"), color=LBL, ha="center", va="top", zorder=8)
+    card(600, y2, cw2, ch2, "部门")
+    dept_labels = ["财务部", "人力资源部", "行政部", "信息技术部", "研发部", "销售部"]
+    dept_vals = [17, 46, 9, 162, 799, 437]
+    for i, (lbl, val) in enumerate(zip(dept_labels, dept_vals)):
+        yc = y2 + ch2 - 55 - i * 26
+        ax.text(680, yc, lbl, fontproperties=fp(9.0, False, "ea"), color=TXT, ha="right", va="center", zorder=8)
+        bw = val / max(dept_vals) * 120
+        ax.add_patch(Rectangle((690, yc - 6), bw, 12, facecolor=C_LBLUE, edgecolor="none", zorder=5))
+        ax.text(690 + bw + 6, yc, str(val), fontproperties=fp(9.0, False, "num"), color=TXT, ha="left", va="center", zorder=8)
+    return fig
+if __name__ == "__main__":
+    f = draw()
+    out = os.path.join(OUT, "chapter4_人员结构看板.png")
+    f.savefig(out, dpi=DPI, facecolor=BG)
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import display
+            display(f)
+    except Exception:
+        pass
+    plt.close(f)
+    print("已输出：", out)
