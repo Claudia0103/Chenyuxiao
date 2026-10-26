@@ -1,0 +1,84 @@
+# ===== 图5 透视表切片器：部门多选 -> 按 部门x学历 重算平均月收入 =====
+import numpy as np, matplotlib.pyplot as plt, ipywidgets as widgets
+from matplotlib.colors import LinearSegmentedColormap
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK  = False
+BG    = "#1A1E43" if DARK else "#FFFFFF"
+FG    = "#F2F2F2" if DARK else "#333333"
+GRIDC = "#3A4270" if DARK else "#D9D9D9"
+
+EDU   = ["本科", "博士", "高中", "硕士", "专科"]
+DEPTS = ["销售", "行政", "人力资源", "市场拓展", "工程", "后勤", "财务"]
+# 明细预聚合：部门 -> 学历 -> (人数, 月收入合计)
+AGG = {
+ "人力资源": {"专科": (15, 67336),   "博士": (3, 14971),    "本科": (27, 182535),
+              "硕士": (15, 145667),  "高中": (5, 13883)},
+ "后勤":     {"高中": (1, 2693)},
+ "工程":     {"高中": (1, 3468)},
+ "市场拓展": {"专科": (119, 822057), "博士": (16, 114992),  "本科": (230, 1411813),
+              "硕士": (162, 1091720), "高中": (73, 427315)},
+ "行政":     {"专科": (56, 282044),  "博士": (13, 130459),  "本科": (121, 761899),
+              "硕士": (83, 472776),  "高中": (32, 201259)},
+ "财务":     {"专科": (5, 17338),    "博士": (1, 4317),     "本科": (28, 183935),
+              "硕士": (10, 74127),   "高中": (8, 28914)},
+ "销售":     {"专科": (87, 567139),  "博士": (15, 132588),  "本科": (166, 1187693),
+              "硕士": (128, 935006), "高中": (50, 281365)},
+}
+
+sm  = widgets.SelectMultiple(options=DEPTS, value=("市场拓展",), rows=7, description="部门")
+out = widgets.Output()
+
+def calc():
+    acc = {e: [0, 0] for e in EDU}
+    tn = ts = 0
+    for d in sm.value:
+        for e, (n, s) in AGG[d].items():
+            acc[e][0] += n; acc[e][1] += s; tn += n; ts += s
+    vals = [round(acc[e][1] / acc[e][0]) if acc[e][0] else 0 for e in EDU]
+    vals.append(round(ts / tn) if tn else 0)
+    return vals
+
+def grad_bars(ax, xs, ys, w=0.32, c1="#00B0F0", c2="#0070C0"):
+    cmap = LinearSegmentedColormap.from_list("g", [c1, c2])
+    g = np.linspace(0, 1, 256).reshape(-1, 1)
+    for x, y in zip(xs, ys):
+        if y <= 0:
+            continue
+        ax.imshow(g, extent=[x - w / 2, x + w / 2, 0, y], aspect="auto",
+                  cmap=cmap, origin="upper", zorder=3)
+
+def render(_=None):
+    vals = calc()
+    cats = EDU + ["总计"]
+    out.clear_output(wait=True)
+    with out:
+        fig, ax = plt.subplots(figsize=(9, 4.4), dpi=100)
+        fig.patch.set_facecolor(BG); ax.set_facecolor(BG)
+        if not sm.value:
+            ax.text(0.5, 0.5, "未选择任何部门", transform=ax.transAxes, ha="center",
+                    va="center", color=FG, fontsize=14, alpha=.45)
+            ax.axis("off"); plt.show(); return
+        x = np.arange(len(cats))
+        grad_bars(ax, x, vals)
+        ax.set_ylim(0, max(vals) * 1.20)
+        ax.set_xticks(x); ax.set_xticklabels(cats)
+        ax.set_yticks(np.linspace(0, max(vals) * 1.20, 5))
+        ax.set_yticklabels([])                       # 纵轴不显示刻度值，只留网格
+        ax.grid(axis="y", ls="--", lw=0.8, color=GRIDC, zorder=0)
+        for s in ("top", "right", "left"):
+            ax.spines[s].set_visible(False)
+        ax.spines["bottom"].set_color(GRIDC)
+        ax.tick_params(colors=FG, labelsize=11)
+        for xi, v in zip(x, vals):
+            if v:
+                ax.text(xi, v + max(vals) * 0.02, "{:,}".format(v), color=FG,
+                        fontsize=10.5, ha="center")
+        plt.show()
+
+sm.observe(render, names="value")
+render()
+display(widgets.HBox([sm]), out)

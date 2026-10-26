@@ -1,0 +1,42 @@
+# ===== 图1 动态柱形图：组合框(月份) -> INDEX + VLOOKUP 取数 =====
+import math
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK  = False
+BG    = "#1A1E43" if DARK else "#FFFFFF"
+FG    = "#F2F2F2" if DARK else "#333333"
+GRIDC = "#3A4270" if DARK else "#D9D9D9"
+
+REGIONS = ["华北", "华南", "东北", "西北", "西南", "华东"]
+MONTHS  = ["1月", "2月", "3月", "4月", "5月", "6月"]
+SALES   = {"1月": [259, 247, 705, 513, 463, 384], "2月": [235, 266, 529, 324, 579, 282],
+           "3月": [330, 342, 705, 540, 492, 308], "4月": [282, 342, 599, 270, 492, 384],
+           "5月": [282, 323, 705, 486, 405, 308], "6月": [965, 380, 282, 567, 463, 897]}
+
+dd  = widgets.Dropdown(options=MONTHS, value="5月", description="月份")
+out = widgets.Output()
+
+def render(_=None):
+    m, v = dd.value, SALES[dd.value]
+    out.clear_output(wait=True)
+    with out:
+        fig, ax = plt.subplots(figsize=(8, 4.2), dpi=100)
+        fig.patch.set_facecolor(BG); ax.set_facecolor(BG)
+        ax.bar(REGIONS, v, width=0.45, color="#0097E0", zorder=3)
+        ax.set_ylim(0, max(800, math.ceil(max(v) * 1.06)))
+        ax.grid(axis="y", ls="--", lw=0.8, color=GRIDC, zorder=0)
+        for s in ("top", "right", "left"):
+            ax.spines[s].set_visible(False)
+        ax.spines["bottom"].set_color(GRIDC)
+        ax.tick_params(colors=FG, labelsize=11)
+        ax.set_title("%s 各区域销量      合计 %d" % (m, sum(v)), color=FG, fontsize=13, pad=12)
+        plt.show()
+
+dd.observe(render, names="value")
+render()
+display(widgets.HBox([dd]), out)

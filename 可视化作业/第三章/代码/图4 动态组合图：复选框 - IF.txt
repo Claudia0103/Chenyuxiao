@@ -1,0 +1,64 @@
+# ===== 图4 动态组合图：复选框 -> IF(勾选, 原值, -100) 被 min=0 主轴裁掉 =====
+import numpy as np, matplotlib.pyplot as plt, ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK  = False
+BG    = "#1A1E43" if DARK else "#FFFFFF"
+FG    = "#F2F2F2" if DARK else "#333333"
+GRIDC = "#3A4270" if DARK else "#D9D9D9"
+
+CATS   = ["口红", "面膜", "隔离", "粉底液"]
+SALES  = [2800, 2564, 2282, 2353]
+PROFIT = [1896, 1563, 986, 1324]
+RATE   = [p / s for p, s in zip(PROFIT, SALES)]
+
+ck1 = widgets.Checkbox(value=True, description="销售额")
+ck2 = widgets.Checkbox(value=True, description="利润")
+ck3 = widgets.Checkbox(value=True, description="利润率")
+out = widgets.Output()
+
+def render(_=None):
+    out.clear_output(wait=True)
+    with out:
+        fig, ax = plt.subplots(figsize=(8, 4.6), dpi=100)
+        fig.patch.set_facecolor(BG); ax.set_facecolor(BG)
+        x  = np.arange(len(CATS))
+        hs, ls = [], []
+        if ck1.value:
+            b = ax.bar(x - 0.17, SALES, width=0.32, color="#0070C0", zorder=3)
+            ax.bar_label(b, fmt="%d", label_type="center", color="w", fontsize=9.5, zorder=4)
+            hs.append(b); ls.append("销售额")
+        if ck2.value:
+            b = ax.bar(x + 0.17, PROFIT, width=0.32, color="#E74E69", zorder=3)
+            ax.bar_label(b, fmt="%d", label_type="center", color="w", fontsize=9.5, zorder=4)
+            hs.append(b); ls.append("利润")
+        ax.set_ylim(0, 4000)
+        ax.set_xticks(x); ax.set_xticklabels(CATS)
+        ax.grid(axis="y", ls="--", lw=0.8, color=GRIDC, zorder=0)
+        ax.tick_params(colors=FG, labelsize=11)
+        ax.spines["top"].set_visible(False)
+        axt = ax.twinx()
+        axt.set_ylim(0, 1)
+        tk = np.linspace(0, 1, 6)
+        axt.set_yticks(tk); axt.set_yticklabels(["%.0f%%" % (v * 100) for v in tk])
+        axt.tick_params(colors=FG, labelsize=10)
+        axt.spines["top"].set_visible(False)
+        if ck3.value:
+            ln, = axt.plot(x, RATE, "o-", color="#FFC000", lw=2.5, ms=9, zorder=5)
+            hs.append(ln); ls.append("利润率")
+            for xi, r in zip(x, RATE):
+                axt.text(xi, r + 0.03, "%.1f%%" % (r * 100), color="#FFC000",
+                         fontsize=10.5, ha="center")
+        if hs:
+            ax.legend(hs, ls, loc="upper center", ncol=3, frameon=False,
+                      fontsize=11, labelcolor=FG, bbox_to_anchor=(0.5, 1.0))
+        ax.set_title("2022年化妆品销售情况", color=FG, fontsize=14, pad=28)
+        plt.show()
+
+for ck in (ck1, ck2, ck3):
+    ck.observe(render, names="value")
+render()
+display(widgets.HBox([ck1, ck2, ck3]), out)

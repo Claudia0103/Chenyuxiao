@@ -1,0 +1,64 @@
+# ===== 图7 动态滑珠图：选项按钮换视角 + 组合框选对照字段 =====
+import numpy as np, matplotlib.pyplot as plt, ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK   = False
+BG     = "#1A1E43" if DARK else "#FFFFFF"
+FG     = "#F2F2F2" if DARK else "#333333"
+GRIDC  = "#3A4270" if DARK else "#D9D9D9"
+TRACK  = "#2C3560" if DARK else "#E8EEF5"
+
+REGIONS = ["华北", "华南", "东北", "西北", "西南", "华东"]
+MONTHS  = ["1月", "2月", "3月", "4月", "5月", "6月"]
+DONE = {"华北": [0.32, 0.45, 0.66, 0.52, 0.69, 0.771],
+        "华南": [0.49, 0.36, 0.54, 0.39, 0.415, 0.403],
+        "东北": [0.65, 0.53, 0.58, 0.48, 0.445, 0.399],
+        "西北": [0.73, 0.63, 0.61, 0.53, 0.47, 0.408],
+        "西南": [0.536, 0.498, 0.527, 0.708, 0.7035, 0.758],
+        "华东": [0.32, 0.49, 0.65, 0.73, 0.536, 0.7468]}
+
+rd  = widgets.RadioButtons(options=[("按月看各区域", "m"), ("按区域看各月", "r")], value="m")
+dd  = widgets.Dropdown(options=MONTHS, value="1月", description="对照")
+out = widgets.Output()
+
+def on_mode(_=None):
+    dd.options = MONTHS if rd.value == "m" else REGIONS
+    dd.value = dd.options[0]
+
+def render(_=None):
+    if rd.value == "m":
+        cats = REGIONS
+        vals = [DONE[r][MONTHS.index(dd.value)] for r in REGIONS]
+        title = "%s 各区域完成率" % dd.value
+    else:
+        cats = MONTHS
+        vals = list(DONE[dd.value])
+        title = "%s 各月完成率" % dd.value
+    out.clear_output(wait=True)
+    with out:
+        fig, ax = plt.subplots(figsize=(8.4, 4.8), dpi=100)
+        fig.patch.set_facecolor(BG); ax.set_facecolor(BG)
+        y = np.arange(len(cats))
+        ax.barh(y, [1] * len(cats), height=0.30, color=TRACK, zorder=1)   # 轨道
+        ax.barh(y, vals, height=0.30, color="#0070C0", zorder=2)          # 完成率
+        ax.scatter(vals, y, s=170, fc="#FFFFFF", ec="#0070C0", lw=2.5, zorder=3)
+        ax.set_xlim(0, 1)
+        tk = np.linspace(0, 1, 6)
+        ax.set_xticks(tk); ax.set_xticklabels(["%.0f%%" % (v * 100) for v in tk])
+        ax.set_yticks(y); ax.set_yticklabels(cats)
+        ax.invert_yaxis()
+        ax.grid(axis="x", ls="--", lw=0.8, color=GRIDC, zorder=0)
+        for s in ("top", "right", "left"):
+            ax.spines[s].set_visible(False)
+        ax.spines["bottom"].set_color(GRIDC)
+        ax.tick_params(colors=FG, labelsize=11)
+        ax.set_title(title, color=FG, fontsize=13, pad=12)
+        plt.show()
+
+rd.observe(on_mode, names="value")
+dd.observe(render, names="value")
+render()
+display(widgets.HBox([rd, dd]), out)

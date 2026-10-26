@@ -1,0 +1,347 @@
+# -*- coding: utf-8 -*-
+"""
+销售数据可视化看板 —— Jupyter 内联可交互版（下拉切月，图就地重绘）
+
+用法：整段复制进 Jupyter 一个 cell 运行。上方出现「月份」下拉框，选哪个月图就重画哪个月；
+旁边「导出当前月 PNG」按钮把当前这屏存成 PNG。
+依赖：ipywidgets（Anaconda 一般自带；没有就先跑 !pip install ipywidgets）
+
+数据直接从原表「销售明细」「成本明细」重算（等价于表里的 SUMIFS / COUNTIFS / RANK + VLOOKUP），
+不读 Excel 缓存值，换月份、换数据源都能直接跑。
+布局与配色取自原表 chart XML：底色 #1A1E43、面板 #2C3560、
+柱/环 #7BBDD5 #4A5BD1 #FC6C9D #F6A576、微软雅黑 18pt 主标题 / 12pt 图表标题 / 8-9pt 刻度。
+"""
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, Polygon
+from matplotlib.colors import LinearSegmentedColormap
+
+# ==================== 参数区 ====================
+SRC     = r"C:\Users\LENOVO\Desktop\《Excel数据可视化 - 从图表到数据大屏》-清华-郭宏远\第四章 销售看板参考.xlsx"
+MONTH   = 9                                   # 打开时的默认月份
+OUT_DIR = r"C:\Users\LENOVO\Desktop"          # 「导出 PNG」按钮的保存目录
+DPI     = 150                                 # 导出清晰度；画布逻辑尺寸固定 1224x702
+
+# ==================== 画布 / 配色 ====================
+W, H = 1224, 702
+BG, PANEL, TEXT = "#1A1E43", "#2C3560", "#F2F2F2"
+C_BLUE, C_INDIGO, C_PINK, C_ORANGE = "#7BBDD5", "#4A5BD1", "#FC6C9D", "#F6A576"
+FONT = "Microsoft YaHei"
+plt.rcParams["font.sans-serif"] = [FONT, "SimHei", "DengXian"]
+plt.rcParams["axes.unicode_minus"] = False
+
+OX = 18.75                                    # 内容区左边距（1186.5 宽居中到 1224）
+BOX = {                                       # 原表锚点换算出的像素坐标 (x, y, w, h)
+    "topbar":    (OX + 2.5,    15.5, 1184.0,  68.0),
+    "botbar":    (OX + 0.0,   664.0, 1186.5,  37.8),
+    "costpanel": (OX + 0.0,   347.5,  388.5, 310.0),
+    "cat":       (OX + 0.0,    91.0,  389.3, 245.7),   # 产品类别销量（环形+图例）
+    "mom":       (OX + 398.0,  91.0,  389.3, 151.2),   # 销量环比（水平条）
+    "sales":     (OX + 796.5,  91.0,  389.3, 207.9),   # 各月销售额（渐变面积）
+    "top3":      (OX + 398.0, 250.5,  389.3, 189.0),   # 商品销售额 Top3（水平条）
+    "profit":    (OX + 398.0, 449.6,  389.3, 207.9),   # 利润额占比销售额（环）
+    "region":    (OX + 796.3, 308.0,  389.3, 170.1),   # 区域销量（纵向柱）
+    "express":   (OX + 795.3, 487.4,  389.3, 170.1),   # 快递公司销量（纵向柱）
+}
+# 四个成本环：左上推广 / 右上人工 / 左下产品 / 右下其他（原表位置）
+RINGS = [(OX + 10.0,  389.0, 173.9, 124.7, "推广"),
+         (OX + 201.0, 390.0, 173.9, 124.7, "人工"),
+         (OX + 10.0,  524.5, 173.9, 124.7, "产品"),
+         (OX + 200.5, 525.5, 173.9, 124.7, "其他")]
+
+REGIONS  = ["华北", "华南", "东北", "西北", "西南", "华东"]
+EXPRESS  = ["顺丰", "韵达", "中通", "申通", "圆通", "EMS"]
+CATS     = ["办公用品", "家具产品", "数码电子"]
+COSTCATS = ["推广", "其他", "人工", "产品"]
+
+
+# ==================== 数据：按原表口径重算 ====================
+def load_and_agg(src):
+    sale = pd.read_excel(src, sheet_name="销售明细")
+    cost = pd.read_excel(src, sheet_name="成本明细")
+    sale.columns = [c.strip() for c in sale.columns]
+    cost.columns = [c.strip() for c in cost.columns]
+    sale["月"] = pd.to_datetime(sale["订单日期"]).dt.month
+    cost["月"] = cost["月份_成本"].astype(str).str.replace("月", "", regex=False).astype(int)
+
+    prods = list(dict.fromkeys(sale["产品名称"].tolist()))      # 原表 S 列出现顺序
+    agg = {"monthlySales": [], "months": {}}
+    for m in range(1, 13):
+        agg["monthlySales"].append(float(sale.loc[sale["月"] == m, "订单额"].sum()) / 1e4)
+
+    for m in range(1, 13):
+        d, cs = sale[sale["月"] == m], cost[cost["月"] == m]
+        amt  = float(d["订单额"].sum()) / 1e4
+        prof = float(d["利润额"].sum()) / 1e4
+        g    = d.groupby("产品名称")["订单额"].sum() / 1e4
+        cntg = d.groupby("产品名称").size()
+        rec = [(p, float(g.get(p, 0.0)), int(cntg.get(p, 0)),
+                1 + int((g > float(g.get(p, 0.0)) + 1e-12).sum())) for p in prods]
+        top3 = []
+        for rk in (1, 2, 3):                                     # RANK + VLOOKUP 语义
+            hit = [x for x in rec if x[3] == rk]
+            top3.append({"name": hit[0][0], "amount": hit[0][1], "qty": hit[0][2]} if hit
+                        else {"name": "-", "amount": 0.0, "qty": 0})
+        pm = 12 if m == 1 else m - 1
+        agg["months"][m] = {
+            "cost": float(cs["成本"].sum()),
+            "costShare": {k: float(cs.loc[cs["类别"] == k, "成本"].sum()) for k in COSTCATS},
+            "qty": int(len(d)), "amount": amt, "profit": prof,
+            "profitRate": prof / amt if amt else 0.0,
+            "region":  [int((d["区域"] == r).sum()) for r in REGIONS],
+            "express": [int((d["快递公司"] == e).sum()) for e in EXPRESS],
+            "cat":     [int((d["产品类别"] == c).sum()) for c in CATS],
+            "prevMonth": pm, "prevQty": int((sale["月"] == pm).sum()),
+            "top3": top3,
+        }
+    return agg
+
+
+# ==================== 画布工具 ====================
+def px(x, y):
+    """像素 -> figure 分数坐标（y 轴向下）"""
+    return x / W, (H - y) / H
+
+
+def bg_ax(fig):
+    """铺满整图的底层 axes：面板必须放这里（fig.patches 会盖住上层 axes）"""
+    ax = fig.add_axes([0, 0, 1, 1], zorder=-10)
+    ax.set_xlim(0, W); ax.set_ylim(H, 0); ax.axis("off")
+    return ax
+
+
+def rect(ax, box, color=PANEL, alpha=1.0, ec="none", lw=0.0, zorder=1):
+    ax.add_patch(Rectangle((box[0], box[1]), box[2], box[3], facecolor=color,
+                           edgecolor=ec, lw=lw, alpha=alpha, zorder=zorder))
+
+
+def chart_ax(fig, box, pad=(0, 22, 0, 16)):
+    """在 box 内缩出绘图区：pad = (左, 上, 右, 下)"""
+    l, t, r, b = pad
+    ax = fig.add_axes([(box[0] + l) / W, (H - box[1] - box[3] + b) / H,
+                       (box[2] - l - r) / W, (box[3] - t - b) / H])
+    ax.set_facecolor("none")
+    for s in ax.spines.values():
+        s.set_visible(False)
+    return ax
+
+
+def title(fig, box, t, size=12, weight="normal", align="left", dy=9):
+    x = box[0] if align == "left" else box[0] + box[2] / 2
+    fig.text(*px(x, box[1] + dy), t, ha=align, va="center", color=TEXT,
+             fontsize=size, fontname=FONT, fontweight=weight)
+
+
+def clean(ax, tick=8):
+    ax.tick_params(colors=TEXT, labelsize=tick, length=0, pad=3)
+    for lb in ax.get_xticklabels() + ax.get_yticklabels():
+        lb.set_fontname(FONT); lb.set_color(TEXT)
+
+
+def ring(ax, share, color, label, sub, hole=0.85):
+    """holeSize=85 的圆环 + 环心文字"""
+    ax.pie([1], colors=["#FFFFFF"], radius=1.0,
+           wedgeprops=dict(width=1 - hole, edgecolor="none", alpha=0.09, zorder=1))
+    ax.pie([share, 1 - share], colors=[color, "none"], startangle=90, counterclock=False,
+           radius=1.0, wedgeprops=dict(width=1 - hole, edgecolor="none", zorder=2))
+    ax.set_xlim(-1.15, 1.15); ax.set_ylim(-1.15, 1.15)
+    ax.set_aspect("equal"); ax.axis("off")
+    ax.text(0, 0.26, label, ha="center", va="center", color=TEXT, fontsize=9.5, fontname=FONT)
+    ax.text(0, -0.16, sub, ha="center", va="center", color=TEXT, fontsize=13,
+            fontname=FONT, fontweight="bold")
+
+
+def gradient_area(ax, xs, ys, color, ymax):
+    """竖向渐变面积：顶部不透明 -> 底部透明（原表 chart8 样式）"""
+    cmap = LinearSegmentedColormap.from_list("g", [color + "1F", color], N=256)
+    im = ax.imshow(np.linspace(0, 1, 256).reshape(256, 1), extent=[xs[0], xs[-1], 0, ymax],
+                   aspect="auto", cmap=cmap, origin="lower", zorder=1, interpolation="bicubic")
+    poly = ax.fill_between(xs, 0, ys, facecolor="none", edgecolor="none", zorder=2)
+    im.set_clip_path(poly.get_paths()[0], transform=ax.transData)
+    ax.plot(xs, ys, color=color, lw=1.8, zorder=3, solid_capstyle="round")
+
+
+# ==================== 画一屏（返回 fig，不负责显示/保存）====================
+def draw(agg, month, dpi=DPI):
+    m = agg["months"][month]
+    fig = plt.figure(figsize=(W / 100.0, H / 100.0), dpi=dpi, facecolor=BG)
+    b = bg_ax(fig)
+
+    for k in ("topbar", "botbar", "costpanel"):
+        rect(b, BOX[k])
+
+    # 左上角 logo（原表是 26x26 的 PNG，这里用三根小柱子矢量替代）
+    lx, ly = OX + 1029, 49.5
+    for i, hh in enumerate((9, 16, 22)):
+        b.add_patch(Rectangle((lx + i * 8, ly + 26 - hh), 5, hh,
+                              facecolor=C_BLUE, edgecolor="none", zorder=3))
+    # 月份下拉框（静态示意；真正能点的是 notebook 上方那个 ipywidgets 下拉）
+    dx, dy = OX + 1074, 51
+    rect(b, (dx, dy, 63, 23), BG, ec=C_BLUE, lw=1.0, zorder=3)
+    fig.text(*px(dx + 30, dy + 11.5), f"{month}月", ha="center", va="center",
+             color=TEXT, fontsize=9, fontname=FONT, zorder=4)
+    b.add_patch(Polygon([(dx + 50, dy + 9), (dx + 58, dy + 9), (dx + 54, dy + 14.5)],
+                        closed=True, facecolor=C_BLUE, edgecolor="none", zorder=4))
+
+    tb = BOX["topbar"]
+    fig.text(*px(tb[0] + 24, tb[1] + tb[3] / 2), "公司销售数据可视化看板", ha="left", va="center",
+             color=TEXT, fontsize=18, fontweight="bold", fontname=FONT)
+
+    cp = BOX["costpanel"]
+    title(fig, cp, "成本费用", size=13, weight="bold", align="center", dy=20)
+
+    # 1. 产品类别销量（环形 + 右侧图例）
+    title(fig, BOX["cat"], "产品类别销量")
+    ax = chart_ax(fig, BOX["cat"], pad=(4, 26, 128, 10))
+    w_, _ = ax.pie(m["cat"], colors=[C_PINK, C_INDIGO, C_ORANGE], startangle=90, counterclock=False,
+                   radius=1.0, wedgeprops=dict(width=0.15, edgecolor="none"))
+    ax.set_aspect("equal"); ax.axis("off")
+    leg = ax.legend(w_, [f"{c}  {v}" for c, v in zip(CATS, m["cat"])],
+                    loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False,
+                    fontsize=9, handlelength=0.9, handleheight=0.9, labelspacing=1.0,
+                    borderaxespad=0.0)
+    for t in leg.get_texts():
+        t.set_fontname(FONT); t.set_color(TEXT)
+
+    # 2. 销量环比（上月 #4A5BD1 / 本月 #7BBDD5）
+    title(fig, BOX["mom"], "销量环比")
+    ax = chart_ax(fig, BOX["mom"], pad=(46, 30, 56, 6))
+    vals = [m["prevQty"], m["qty"]]
+    names = [f"{m['prevMonth']}月", f"{month}月"]
+    ax.barh([1, 0], vals, height=0.46, color=[C_INDIGO, C_BLUE])
+    ax.set_yticks([1, 0]); ax.set_yticklabels(names)
+    ax.set_xlim(0, max(vals) * 1.32); ax.set_ylim(-0.65, 1.65); ax.set_xticks([])
+    for i, v in zip([1, 0], vals):
+        ax.text(v + max(vals) * 0.035, i, str(v), va="center", color=TEXT, fontsize=9, fontname=FONT)
+    clean(ax, 9)
+
+    # 3. 各月销售额（渐变面积 + 当月标记）
+    title(fig, BOX["sales"], "各月销售额(万)")
+    ax = chart_ax(fig, BOX["sales"], pad=(2, 30, 10, 20))
+    ys, xs = np.array(agg["monthlySales"]), np.arange(1, 13)
+    ymax = ys.max() * 1.16
+    gradient_area(ax, xs, ys, C_INDIGO, ymax)
+    ax.set_xlim(0.55, 12.45); ax.set_ylim(0, ymax)
+    ax.set_xticks(xs); ax.set_xticklabels([f"{i}月" for i in xs])
+    ax.set_yticks([]); clean(ax, 7)
+    ax.plot([month, month], [0, ys[month - 1]], color=TEXT, lw=0.7, alpha=0.30, zorder=0)
+    ax.plot([month], [ys[month - 1]], "o", color=TEXT, ms=4.5, zorder=4)
+
+    # 4. 商品销售额 Top3（原表是 300/100/100 占位值，这里用真实 Top3）
+    title(fig, BOX["top3"], "商品销售额Top3")
+    ax = chart_ax(fig, BOX["top3"], pad=(112, 30, 58, 10))
+    t3 = m["top3"][::-1]
+    vals = [t["amount"] for t in t3]
+    vmax = max(vals) if max(vals) else 1
+    ax.barh(range(3), vals, height=0.44, color=C_INDIGO)
+    ax.set_yticks(range(3))
+    ax.set_yticklabels([(t["name"][:10] + "…" if len(t["name"]) > 10 else t["name"]) for t in t3],
+                       fontsize=8)
+    ax.set_xlim(0, vmax * 1.02); ax.set_ylim(-0.7, 2.7); ax.set_xticks([])
+    for i, t in enumerate(t3):
+        ax.text(t["amount"] + vmax * 0.03, i, f"{t['amount']:.2f}万", va="center",
+                color=TEXT, fontsize=8, fontname=FONT)
+    clean(ax, 8)
+
+    # 5. 利润额占比销售额（环）
+    title(fig, BOX["profit"], "利润额占比销售额")
+    ax = chart_ax(fig, BOX["profit"], pad=(110, 26, 110, 14))
+    ring(ax, m["profitRate"], C_PINK, "利润率", f"{m['profitRate'] * 100:.2f}%")
+
+    # 6. 区域销量
+    title(fig, BOX["region"], "区域销量")
+    ax = chart_ax(fig, BOX["region"], pad=(2, 30, 4, 20))
+    ax.bar(REGIONS, m["region"], width=0.5, color=C_BLUE)
+    ax.set_ylim(0, max(m["region"]) * 1.24); ax.set_yticks([])
+    for i, v in enumerate(m["region"]):
+        ax.text(i, v + max(m["region"]) * 0.03, str(v), ha="center", color=TEXT,
+                fontsize=8, fontname=FONT)
+    clean(ax, 8)
+
+    # 7. 快递公司销量
+    title(fig, BOX["express"], "快递公司销量")
+    ax = chart_ax(fig, BOX["express"], pad=(2, 30, 4, 20))
+    ax.bar(EXPRESS, m["express"], width=0.5, color=C_PINK)
+    ax.set_ylim(0, max(m["express"]) * 1.24); ax.set_yticks([])
+    for i, v in enumerate(m["express"]):
+        ax.text(i, v + max(m["express"]) * 0.03, str(v), ha="center", color=TEXT,
+                fontsize=8, fontname=FONT)
+    clean(ax, 8)
+
+    # 8. 四个成本占比环
+    tot = sum(m["costShare"].values()) or 1.0
+    for (x, y, w_, h_, name) in RINGS:
+        a = chart_ax(fig, (x, y, w_, h_), pad=(0, 0, 0, 0))
+        share = m["costShare"][name] / tot
+        ring(a, share, C_BLUE, name, f"{share * 100:.1f}%")
+
+    return fig
+
+
+def summary(agg, month):
+    m = agg["months"][month]
+    return (f"{month}月 | 成本 {m['cost']:.2f} | 销量 {m['qty']} | "
+            f"销售额 {m['amount']:.4f}万 | 利润 {m['profit']:.4f}万 | "
+            f"利润率 {m['profitRate'] * 100:.2f}%")
+
+
+def save_png(agg, month, path, dpi=DPI):
+    fig = draw(agg, month, dpi)
+    fig.savefig(path, dpi=dpi, facecolor=BG)
+    plt.close(fig)
+    return path
+
+
+# ==================== 界面（notebook 里跑 = 下拉交互；当 .py 跑 = 直接导出 PNG）====================
+def launch_ui(agg, month=MONTH):
+    """在 notebook cell 里搭出：月份下拉 + 导出按钮 + 图区"""
+    import ipywidgets as widgets
+    from IPython.display import display
+
+    sel  = widgets.Dropdown(options=[(f"{m}月", m) for m in range(1, 13)], value=month,
+                            description="月份：", style={"description_width": "initial"})
+    btn  = widgets.Button(description="导出当前月 PNG", button_style="primary",
+                          icon="download", layout=widgets.Layout(width="170px"))
+    note = widgets.Label(value=summary(agg, month))
+    out  = widgets.Output()
+
+    def render(mm):
+        out.clear_output(wait=True)
+        with out:
+            fig = draw(agg, mm, dpi=110)          # 内联预览 110dpi，导出才用 DPI
+            plt.show(fig)
+            plt.close(fig)
+
+    def on_change(change):
+        if change["name"] == "value":
+            note.value = summary(agg, change["new"])
+            render(change["new"])
+
+    def on_save(_):
+        p = os.path.join(OUT_DIR, f"销售看板_{sel.value}月.png")
+        save_png(agg, sel.value, p)
+        note.value = "已保存：" + p
+
+    sel.observe(on_change)
+    btn.on_click(on_save)
+    display(widgets.VBox([widgets.HBox([sel, btn]), note, out]))
+    render(month)
+
+
+if __name__ == "__main__":
+    try:
+        from IPython import get_ipython
+        IN_NB = get_ipython() is not None
+    except Exception:
+        IN_NB = False
+
+    agg = load_and_agg(SRC)
+    if IN_NB:
+        get_ipython().run_line_magic("matplotlib", "inline")   # 保证内联出图
+        launch_ui(agg, MONTH)
+    else:                                                       # 当普通脚本跑：直接出图
+        p = os.path.join(OUT_DIR, f"销售看板_{MONTH}月.png")
+        print("已输出:", save_png(agg, MONTH, p))
+        print(summary(agg, MONTH))

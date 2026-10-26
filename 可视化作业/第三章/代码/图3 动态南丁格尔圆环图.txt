@@ -1,0 +1,45 @@
+# ===== 图3 动态南丁格尔圆环图：选项按钮 -> HLOOKUP 整行切换 =====
+import numpy as np, matplotlib.pyplot as plt, ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK = False
+BG   = "#1A1E43" if DARK else "#FFFFFF"
+FG   = "#F2F2F2" if DARK else "#333333"
+
+CATS   = ["首页推荐", "关注页面", "搜索", "个人主页", "其他来源"]
+COLORS = ["#4A5BD1", "#6073F3", "#11A7AD", "#FFC000", "#E66B4C"]
+LAYERS = [6, 5, 4, 3, 2]      # 原表按类别顺序固定留的层数
+DATA   = {"近7天":  [0.44, 0.17, 0.15, 0.08, 0.16],
+          "近30天": [0.38, 0.21, 0.15, 0.09, 0.17]}
+
+rd  = widgets.RadioButtons(options=["近7天", "近30天"], value="近7天")
+out = widgets.Output()
+
+def render(_=None):
+    p = rd.value
+    vals = DATA[p]
+    cum  = 0.0
+    out.clear_output(wait=True)
+    with out:
+        fig, ax = plt.subplots(figsize=(8, 5.6), dpi=100)
+        fig.patch.set_facecolor(BG); ax.set_facecolor(BG)
+        for i, (c, v) in enumerate(zip(CATS, vals)):
+            r1 = (44 + 36 * LAYERS[i] / 6.0) / 80.0
+            w  = r1 - 44 / 80.0
+            ax.pie([cum, v, max(0.0, 1 - cum - v)],
+                   colors=[(0, 0, 0, 0), COLORS[i], (0, 0, 0, 0)],
+                   labels=[None, "%s  %.2f" % (c, v), None],
+                   labeldistance=1.06 / r1, startangle=90, counterclock=False,
+                   radius=r1, wedgeprops=dict(width=w, edgecolor="none"),
+                   textprops=dict(color=FG, fontsize=10))
+            cum += v
+        ax.text(0, 0, p, ha="center", va="center", color=FG, fontsize=13, fontweight="bold", alpha=.8)
+        ax.set_xlim(-1.5, 1.5); ax.set_ylim(-1.2, 1.2)
+        plt.show()
+
+rd.observe(render, names="value")
+render()
+display(widgets.HBox([rd]), out)

@@ -1,0 +1,53 @@
+# ===== 图6 VBA动态玉玦图：VBA 按钮写单元格 -> VLOOKUP 取值 + 占位(值+占位=0.5) =====
+import math
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+BG   = "#1A1E43"      # 原图就是深色底；要浅色改 "#FFFFFF"，同时把 FG 改 "#333333"
+FG   = "#FFFFFF"
+TXT  = "#1A1E43"      # 环内百分比用深色
+
+CATS   = ["个人主页", "搜索", "关注页面", "首页推荐"]       # 内圈 -> 外圈
+COLORS = ["#00B0F0", "#11A7AD", "#FFC000", "#E74E69"]
+DATA   = {"近7天":  [0.13, 0.19, 0.32, 0.36],
+          "近30天": [0.09, 0.24, 0.29, 0.38]}
+
+HALF = 0.5            # 每环 = 值 + 占位 = 0.5  ->  弧长 = 值/0.5*360° = 值*720°
+R_IN, R_BAND, R_STEP = 0.366, 0.140, 0.1647
+
+tb  = widgets.ToggleButtons(options=["近7天", "近30天"], value="近7天")
+out = widgets.Output()
+
+def render(_=None):
+    p = tb.value
+    vals = DATA[p]
+    out.clear_output(wait=True)
+    with out:
+        fig = plt.figure(figsize=(7.2, 5.6), dpi=100)
+        fig.patch.set_facecolor(BG)
+        ax = fig.add_axes([0.20, 0.10, 0.66, 0.66]); ax.set_facecolor(BG)
+        for k, (c, v) in enumerate(zip(CATS, vals)):
+            r0 = R_IN + R_STEP * k
+            r1 = r0 + R_BAND
+            ax.pie([v, HALF - v], colors=[COLORS[k], (0, 0, 0, 0)],   # 只有两个点，合计 0.5
+                   startangle=90, counterclock=False, radius=r1,
+                   wedgeprops=dict(width=R_BAND, edgecolor="none"))
+            ang = math.radians(90 - 360 * v)          # 扇区中线（顺时针）
+            rm  = (r0 + r1) / 2
+            ax.text(rm * math.cos(ang), rm * math.sin(ang), "%.0f%%" % (v * 100),
+                    ha="center", va="center", color=TXT, fontsize=9.5)
+        ax.set_xlim(-1.05, 1.05); ax.set_ylim(-1.05, 1.05)
+        for i, c in enumerate(CATS[::-1]):            # 类别名：外圈 -> 内圈
+            ax.text(-0.06, 0.88 - 0.19 * i, c, ha="right", va="center",
+                    color=FG, fontsize=11)
+        fig.text(0.05, 0.91, "%s  流量来源分布" % p, color=FG, fontsize=17, fontweight="bold")
+        fig.text(0.05, 0.045, "*注：数据来源公司网站", color=FG, fontsize=9, alpha=.7)
+        plt.show()
+
+tb.observe(render, names="value")
+render()
+display(widgets.HBox([tb]), out)

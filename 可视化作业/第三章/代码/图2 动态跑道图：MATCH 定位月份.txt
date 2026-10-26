@@ -1,0 +1,47 @@
+# ===== 图2 动态跑道图：MATCH 定位月份 + 占位列(每环总和恒=总人数x0.5) =====
+import numpy as np, matplotlib.pyplot as plt, ipywidgets as widgets
+from IPython.display import display
+
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+DARK  = False
+BG    = "#1A1E43" if DARK else "#FFFFFF"
+FG    = "#F2F2F2" if DARK else "#333333"
+
+DEPTS  = ["人力部", "行政部", "财务部", "工程部", "采购部", "销售部"]
+COLORS = ["#7030A0", "#0070C0", "#37A2DA", "#11A7AD", "#F5C353", "#E74E69"]
+MONTHS = ["1月", "2月", "3月", "4月"]
+HEAD   = {"人力部": [130, 138, 130, 129], "行政部": [226, 206, 217, 226],
+          "财务部": [238, 228, 255, 226], "工程部": [293, 305, 314, 264],
+          "采购部": [326, 349, 316, 359], "销售部": [451, 456, 406, 433]}
+
+dd  = widgets.Dropdown(options=MONTHS, value="4月", description="月份")
+out = widgets.Output()
+
+def render(_=None):
+    m = dd.value
+    vals  = [HEAD[d][MONTHS.index(m)] for d in DEPTS]
+    total = sum(vals)
+    half  = total / 2.0            # 占位列 J = SUM(I4:I9)*0.5 - I4
+    out.clear_output(wait=True)
+    with out:
+        fig = plt.figure(figsize=(8.6, 5.0), dpi=100)
+        fig.patch.set_facecolor(BG)
+        ax = fig.add_axes([0.02, 0.05, 0.62, 0.90]); ax.set_facecolor(BG)
+        for k, (d, v) in enumerate(zip(DEPTS, vals)):
+            r1 = (34 + 9 * (k + 1)) / 88.0          # 外半径
+            ax.pie([v, half - v], colors=[COLORS[k], (0, 0, 0, 0)],
+                   startangle=90, counterclock=False, radius=r1,
+                   wedgeprops=dict(width=9 / 88.0, edgecolor="none"))
+        ax.text(0, 0.05, str(total), ha="center", va="center", color=FG, fontsize=22, fontweight="bold")
+        ax.text(0, -0.10, m, ha="center", va="center", color=FG, fontsize=11, alpha=.6)
+        hs = [plt.Rectangle((0, 0), 1, 1, color=c) for c in COLORS]
+        ax.legend(hs, ["%s  %d" % (d, v) for d, v in zip(DEPTS, vals)],
+                  loc="center left", bbox_to_anchor=(1.06, 0.5),
+                  frameon=False, fontsize=11, labelcolor=FG)
+        plt.show()
+
+dd.observe(render, names="value")
+render()
+display(widgets.HBox([dd]), out)
