@@ -1,0 +1,16 @@
+# 商业数据分析期末大作业 —— 依赖清单
+# 安装：pip install -r requirements.txt
+
+pandas
+numpy
+openpyxl          # 读写 .xlsx
+xlrd>=2.0.1       # 读取官方 .xls 老格式（pandas 3.x 必须 >=2.0.1，不能锁 1.2.0）
+matplotlib        # 12 张模板图 + 6 张业务图
+seaborn           # 热力图 / 配色辅助
+squarify          # fig12 树状图（未装时自动回退为水平条形）
+plotly            # 大屏美国州图
+scikit-learn      # K-Means 聚类
+statsmodels       # SARIMA 预测
+mlxtend           # 可选：RFM 辅助（也可手写）
+streamlit         # 数据大屏
+python-docx       # 论文生成（可选）
