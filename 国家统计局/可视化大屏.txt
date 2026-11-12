@@ -1,0 +1,538 @@
+# -*- coding: utf-8 -*-
+"""
+可视化大屏·宏观经济 —— B2 生成可视化大屏
+==========================================
+读取 B1 下载的「世界银行_宏观指标_长表.csv」，生成一个单文件 HTML：
+  - ECharts 与全部数据都内联在 HTML 里，不依赖 CDN，断网也能双击打开；
+  - 6 张 KPI 卡 + 9 张图表，深色科技风，顶部有年份滑块（可自动播放）和明暗切换；
+  - 年份滑块同时驱动 KPI 卡与「五国 GDP 排行」，其余图表展示完整历史序列。
+
+零第三方依赖（标准库 csv/json/os/urllib）。整份代码粘进 Jupyter 一个 cell 也能跑。
+运行前先跑 B1；若 data/echarts.min.js 不存在，脚本会自动从 unpkg 下载一次。
+"""
+
+import os
+import csv
+import json
+import datetime
+import urllib.request
+
+COUNTRIES = {
+    "CHN": "中国", "USA": "美国", "JPN": "日本", "IND": "印度", "DEU": "德国",
+}
+LONG_CSV = "世界银行_宏观指标_长表.csv"
+ECHARTS_JS = "echarts.min.js"
+HTML_OUT = "宏观经济数据大屏.html"
+ECHARTS_URL = "https://unpkg.com/echarts@5.5.1/dist/echarts.min.js"
+
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = os.getcwd()
+DATA_DIR = os.path.join(_HERE, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def load_long(path):
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def build_payload(rows):
+    """长表 -> 前端用的 {years, countries, series[国家][指标][年份]=值, latestYear}"""
+    series, years = {}, set()
+    for r in rows:
+        y, v = str(r["年份"]), r["数值"]
+        if not y.isdigit() or v == "":
+            continue
+        year = int(y)
+        years.add(year)
+        iso, ind = r["国家代码"], r["指标"]
+        series.setdefault(iso, {}).setdefault(ind, {})[year] = round(float(v), 4)
+    ys = sorted(years)
+    # 最新年：中国 GDP 有值的最后一年，避免用某个指标缺失的年份
+    latest = max(y for y in ys if "CHN" in series
+                 and series["CHN"].get("GDP总量(现价美元)", {}).get(y) is not None)
+    return {
+        "years": ys,
+        "latestYear": latest,
+        "countries": [{"code": k, "name": v} for k, v in COUNTRIES.items()],
+        "series": series,
+        "source": "World Bank Open Data | api.worldbank.org",
+        "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def get_echarts():
+    path = os.path.join(DATA_DIR, ECHARTS_JS)
+    if not os.path.exists(path) or os.path.getsize(path) < 300000:
+        print("本地未找到 ECharts，正在下载一次 ...")
+        req = urllib.request.Request(ECHARTS_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            blob = r.read()
+        with open(path, "wb") as f:
+            f.write(blob)
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return text.replace("</script", "<\\/script")
+
+
+# ======================================================================
+# HTML 模板：占位符 __ECHARTS__ / __DATA__ 用 replace 注入，避开 CSS/JS 花括号
+# ======================================================================
+TEMPLATE = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中国宏观经济数据大屏 | World Bank Open Data</title>
+<style>
+:root{
+  --bg:#061321; --bg2:#0a1d31; --panel:rgba(13,34,57,.86); --panel2:rgba(17,43,70,.6);
+  --line:rgba(70,160,240,.28); --grid:rgba(130,180,225,.11);
+  --text:#e8f4ff; --muted:#86a9c9; --accent:#36c6ff; --shadow:rgba(0,0,0,.35);
+  --chip:rgba(54,198,255,.12);
+}
+body.light{
+  --bg:#f1f5fa; --bg2:#e8eff7; --panel:#ffffff; --panel2:#f7fafd;
+  --line:rgba(40,100,170,.22); --grid:rgba(40,100,170,.10);
+  --text:#182c44; --muted:#5d7896; --accent:#1677c8; --shadow:rgba(30,70,120,.12);
+  --chip:rgba(22,119,200,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:radial-gradient(1200px 700px at 50% -10%,var(--bg2),var(--bg)) fixed;
+  color:var(--text); font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+  min-height:100vh; padding:16px 20px 22px; transition:background .3s,color .3s;
+}
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; opacity:.5;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:44px 44px; mask-image:linear-gradient(180deg,#000,transparent 85%);
+}
+.wrap{max-width:1860px;margin:0 auto;position:relative}
+header{display:flex;align-items:center;gap:18px;padding:6px 6px 16px;border-bottom:1px solid var(--line)}
+.brand{flex:0 0 auto;display:flex;align-items:center;gap:12px}
+.logo{width:38px;height:38px;border:2px solid var(--accent);border-radius:9px;position:relative;
+      box-shadow:0 0 18px var(--chip) inset}
+.logo::after{content:"";position:absolute;inset:7px;border:2px solid var(--accent);border-radius:3px;opacity:.65}
+h1{font-size:26px;letter-spacing:3px;font-weight:700;white-space:nowrap}
+.sub{font-size:12px;color:var(--muted);letter-spacing:1px;margin-top:3px}
+.head-mid{flex:1;text-align:center;font-size:12px;color:var(--muted);letter-spacing:1px}
+.head-mid b{color:var(--accent);font-weight:600}
+.head-right{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.clock{font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted);letter-spacing:1px}
+button{font-family:inherit;cursor:pointer;color:var(--text);background:var(--chip);
+       border:1px solid var(--line);border-radius:7px;padding:7px 13px;font-size:12px;
+       transition:all .2s}
+button:hover{border-color:var(--accent);box-shadow:0 0 12px var(--chip)}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:14px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;
+     position:relative;overflow:hidden;box-shadow:0 6px 20px var(--shadow)}
+.kpi::before{content:"";position:absolute;left:0;top:0;width:3px;height:100%;background:var(--accent);opacity:.75}
+.kpi .t{font-size:12px;color:var(--muted);letter-spacing:1px}
+.kpi .v{font-size:27px;font-weight:700;line-height:1.35;font-variant-numeric:tabular-nums;
+        margin-top:4px;letter-spacing:.5px}
+.kpi .v small{font-size:12px;font-weight:400;color:var(--muted);margin-left:4px}
+.kpi .d{font-size:11px;margin-top:3px;color:var(--muted)}
+.kpi .d .up{color:#ff7b7b} .kpi .d .down{color:#3ddc97}
+.control{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);
+         border-radius:10px;padding:11px 18px;margin-bottom:14px}
+.control .lab{font-size:12px;color:var(--muted);white-space:nowrap;letter-spacing:1px}
+.control .yr{font-size:22px;font-weight:700;color:var(--accent);min-width:70px;
+             font-variant-numeric:tabular-nums}
+input[type=range]{flex:1;accent-color:var(--accent);height:5px;cursor:pointer}
+.control .hint{font-size:11px;color:var(--muted);white-space:nowrap}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.12fr) minmax(0,1fr);gap:13px}
+.col{display:flex;flex-direction:column;gap:13px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+       box-shadow:0 6px 20px var(--shadow);overflow:hidden}
+.panel .hd{display:flex;align-items:center;justify-content:space-between;
+           padding:10px 14px;border-bottom:1px solid var(--line)}
+.panel .hd .n{font-size:13px;font-weight:600;letter-spacing:1px}
+.panel .hd .n::before{content:"";display:inline-block;width:7px;height:7px;border-radius:2px;
+                      background:var(--accent);margin-right:9px;transform:rotate(45deg)}
+.panel .hd .tag{font-size:10px;color:var(--muted);letter-spacing:1px}
+.chart{height:226px;width:100%}
+.chart.tall{height:262px}
+footer{margin-top:16px;padding:11px 14px;border-top:1px solid var(--line);
+       font-size:11px;color:var(--muted);line-height:1.8;display:flex;
+       justify-content:space-between;gap:20px;flex-wrap:wrap}
+footer b{color:var(--text);font-weight:600}
+@media(max-width:1250px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis{grid-template-columns:repeat(3,1fr)}
+  .head-mid{display:none}}
+@media(max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}.kpis{grid-template-columns:repeat(2,1fr)}
+  header{flex-wrap:wrap}h1{font-size:20px}.chart{height:230px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><div class="logo"></div>
+      <div><h1>中国宏观经济数据大屏</h1>
+        <div class="sub">WORLD BANK OPEN DATA · 1960—2025 · 五国对比</div></div>
+    </div>
+    <div class="head-mid">数据来源 <b>世界银行公开数据库</b> · 口径统一 · 逐年可追溯</div>
+    <div class="head-right">
+      <span class="clock" id="clock"></span>
+      <button id="themeBtn">切换浅色</button>
+    </div>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="control">
+    <span class="lab">观察年份</span>
+    <span class="yr" id="yearLabel"></span>
+    <input type="range" id="yearSlider">
+    <button id="playBtn">自动播放</button>
+    <span class="hint">拖动滑块：KPI 卡与五国 GDP 排行同步变化</span>
+  </div>
+
+  <div class="grid">
+    <div class="col">
+      <div class="panel"><div class="hd"><span class="n">GDP 总量走势</span><span class="tag">万亿美元 · 现价</span></div>
+        <div class="chart" id="c_gdp"></div></div>
+      <div class="panel"><div class="hd"><span class="n">三次产业结构变迁</span><span class="tag">占 GDP 比重 %</span></div>
+        <div class="chart" id="c_struct"></div></div>
+      <div class="panel"><div class="hd"><span class="n">CPI 通胀率</span><span class="tag">年度 %</span></div>
+        <div class="chart" id="c_cpi"></div></div>
+    </div>
+    <div class="col">
+      <div class="panel"><div class="hd"><span class="n">五国 GDP 排行</span><span class="tag" id="rankTag"></span></div>
+        <div class="chart tall" id="c_rank"></div></div>
+      <div class="panel"><div class="hd"><span class="n">GDP 实际增速对比</span><span class="tag">1970 起 · %</span></div>
+        <div class="chart" id="c_growth"></div></div>
+      <div class="panel"><div class="hd"><span class="n">人均 GDP 对比</span><span class="tag">现价美元</span></div>
+        <div class="chart" id="c_pcap"></div></div>
+    </div>
+    <div class="col">
+      <div class="panel"><div class="hd"><span class="n">人口与城镇化</span><span class="tag">亿人 / %</span></div>
+        <div class="chart" id="c_pop"></div></div>
+      <div class="panel"><div class="hd"><span class="n">外贸依存度</span><span class="tag">进出口占 GDP %</span></div>
+        <div class="chart" id="c_trade"></div></div>
+      <div class="panel"><div class="hd"><span class="n">发展轨迹：收入 × 城镇化</span><span class="tag">气泡=GDP 总量</span></div>
+        <div class="chart" id="c_bubble"></div></div>
+    </div>
+  </div>
+
+  <footer>
+    <div><b>数据：</b>世界银行 Open Data（api.worldbank.org），12 个指标 / 5 个国家 / 1960—2025。
+      GDP 为现价美元，增速为不变价年增长率；缺失年份不插值、不补零。</div>
+    <div><b>生成：</b><span id="genTime"></span> · B1 下载数据 / B2 生成大屏 · 单文件离线可用</div>
+  </footer>
+</div>
+
+<script>__ECHARTS__</script>
+<script>
+const DATA = __DATA__;
+const COLORS = ['#36c6ff','#8b7cff','#ffc75a','#3ddc97','#ff7b7b','#5aa9ff'];
+const CN = 'CHN';
+const state = {year: DATA.latestYear, light:false, timer:null};
+const charts = {};
+const $ = id => document.getElementById(id);
+
+function P(){ return state.light
+  ? {text:'#182c44', muted:'#5d7896', line:'rgba(40,100,170,.35)', grid:'rgba(40,100,170,.10)', area:'rgba(22,119,200,.14)'}
+  : {text:'#e8f4ff', muted:'#86a9c9', line:'rgba(70,160,240,.30)', grid:'rgba(130,180,225,.11)', area:'rgba(54,198,255,.16)'}; }
+
+function val(iso, ind, y){
+  const s = DATA.series[iso] && DATA.series[iso][ind];
+  return (s && s[y] !== undefined) ? s[y] : null;
+}
+function arr(iso, ind){ return DATA.years.map(y => val(iso, ind, y)); }
+function yearsFrom(a){ return DATA.years.filter(y => y >= a); }
+
+function axis(extra){
+  const p = P();
+  return Object.assign({
+    axisLine:{lineStyle:{color:p.line}}, axisTick:{show:false},
+    axisLabel:{color:p.muted, fontSize:10},
+    splitLine:{lineStyle:{color:p.grid, type:'dashed'}},
+    nameTextStyle:{color:p.muted, fontSize:10}
+  }, extra || {});
+}
+function base(extra){
+  const p = P();
+  return Object.assign({
+    backgroundColor:'transparent',
+    textStyle:{fontFamily:'Microsoft YaHei, PingFang SC, sans-serif', color:p.text},
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff', fontSize:12}, axisPointer:{type:'cross',
+             lineStyle:{color:'rgba(120,190,255,.45)'}}},
+    grid:{left:52, right:22, top:34, bottom:30, containLabel:true},
+    legend:{textStyle:{color:p.muted, fontSize:10}, top:2, itemWidth:14, itemHeight:8}
+  }, extra || {});
+}
+function gradient(c1, c2){
+  return new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:c1},{offset:1,color:c2}]);
+}
+function lineSeries(name, data, color, opts){
+  return Object.assign({name:name, type:'line', data:data, smooth:.25, showSymbol:false,
+    symbol:'circle', symbolSize:5, connectNulls:false,
+    lineStyle:{width:2, color:color}, itemStyle:{color:color}}, opts || {});
+}
+
+// ---------- KPI ----------
+const KPIS = [
+  {t:'GDP 总量', ind:'GDP总量(现价美元)', unit:'万亿美元', s:1e12, d:2, kind:'pct'},
+  {t:'GDP 实际增长', ind:'GDP实际增长率', unit:'%', s:1, d:2, kind:'pp'},
+  {t:'人均 GDP', ind:'人均GDP(现价美元)', unit:'美元', s:1, d:0, kind:'pct'},
+  {t:'总人口', ind:'总人口', unit:'亿人', s:1e8, d:2, kind:'pct'},
+  {t:'城镇化率', ind:'城镇化率', unit:'%', s:1, d:1, kind:'pp'},
+  {t:'预期寿命', ind:'出生时预期寿命', unit:'岁', s:1, d:1, kind:'pp'},
+];
+function latestAvailable(iso, ind, y){
+  for (let yy = y; yy >= DATA.years[0]; yy--){
+    const v = val(iso, ind, yy);
+    if (v !== null) return {year:yy, value:v};
+  }
+  return null;
+}
+function renderKpis(){
+  const y = state.year;
+  $('kpis').innerHTML = KPIS.map(k => {
+    // 个别指标（如预期寿命）最新年份尚未发布，回退到最近有数据的年份并标注
+    const hit = latestAvailable(CN, k.ind, y);
+    const cur = hit ? hit.value : null;
+    const used = hit ? hit.year : y;
+    const old = hit ? val(CN, k.ind, used - 1) : null;
+    const main = cur === null ? '—' : (cur / k.s).toLocaleString('zh-CN',
+      {minimumFractionDigits:k.d, maximumFractionDigits:k.d});
+    let delta = '较上年 —';
+    if (cur !== null && old !== null && old !== 0){
+      const d = k.kind === 'pp' ? (cur - old) : (cur/old - 1)*100;
+      const unit = k.kind === 'pp' ? ' pp' : '%';
+      const cls = d >= 0 ? 'up' : 'down';
+      delta = '较上年 <span class="'+cls+'">'+(d>=0?'+':'')+d.toFixed(2)+unit+'</span>';
+    }
+    return '<div class="kpi"><div class="t">'+k.t+' · '+used+'</div>'+
+           '<div class="v">'+main+'<small>'+k.unit+'</small></div>'+
+           '<div class="d">'+delta+'</div></div>';
+  }).join('');
+}
+
+// ---------- 各图表 ----------
+function oGdp(){
+  const ys = DATA.years.filter(y => y>=1965);
+  const cn = ys.map(y => {const v=val(CN,'GDP总量(现价美元)',y);return v===null?null:+(v/1e12).toFixed(3);});
+  const us = ys.map(y => {const v=val('USA','GDP总量(现价美元)',y);return v===null?null:+(v/1e12).toFixed(3);});
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff', fontSize:12},
+             valueFormatter:v => v===null?'-':v+' 万亿'},
+    legend:{data:['中国','美国'], textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:axis({type:'value', name:'万亿美元'}),
+    series:[
+      lineSeries('中国', cn, COLORS[0], {areaStyle:{color:gradient('rgba(54,198,255,.42)','rgba(54,198,255,0)')}}),
+      lineSeries('美国', us, COLORS[2], {areaStyle:{color:gradient('rgba(255,199,90,.22)','rgba(255,199,90,0)')}})
+    ]
+  });
+}
+function oStruct(){
+  const ys = DATA.years.filter(y => y>=1970);
+  const defs = [['农业增加值占GDP',COLORS[3]],['工业增加值占GDP',COLORS[0]],['服务业增加值占GDP',COLORS[1]]];
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}, valueFormatter:v => v===null?'-':v+'%'},
+    legend:{data:defs.map(d=>d[0]), textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:axis({type:'value', max:100, name:'%'}),
+    series: defs.map(d => lineSeries(d[0], ys.map(y=>val(CN,d[0],y)), d[1], {
+      stack:'总量', smooth:false, lineStyle:{width:1,color:d[1]},
+      areaStyle:{color:d[1], opacity:.62}
+    }))
+  });
+}
+function oCpi(){
+  const ys = DATA.years.filter(y => y>=1980);
+  const vs = ys.map(y => val(CN,'CPI通胀率',y));
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}, valueFormatter:v=>v===null?'-':v+'%'},
+    legend:{show:false},
+    xAxis:axis({type:'category', data:ys}),
+    yAxis:axis({type:'value', name:'%'}),
+    series:[{name:'CPI 通胀率', type:'bar', data:vs, barMaxWidth:12,
+      itemStyle:{color:p => (p.data>=0?'#ff7b7b':'#3ddc97'), borderRadius:[2,2,0,0]},
+      markLine:{silent:true, symbol:'none', lineStyle:{color:P().muted,type:'dashed',width:1},
+                label:{show:false}, data:[{yAxis:0}]}}]
+  });
+}
+function oRank(){
+  const y = state.year;
+  const items = DATA.countries.map(c => ({name:c.name, v:val(c.code,'GDP总量(现价美元)',y)}))
+    .filter(x => x.v !== null).sort((a,b)=>a.v-b.v);
+  $('rankTag').textContent = y + ' 年 · 万亿美元';
+  return base({
+    tooltip:{trigger:'item', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12},
+             formatter:p => p.name+'：'+(p.value/1e12).toFixed(2)+' 万亿美元'},
+    grid:{left:60, right:76, top:16, bottom:20, containLabel:true},
+    legend:{show:false},
+    xAxis:axis({type:'value', name:'万亿美元', axisLabel:{color:P().muted,fontSize:10,
+      formatter:v => (v/1e12).toFixed(0)}}),
+    yAxis:axis({type:'category', data:items.map(x=>x.name), splitLine:{show:false}}),
+    series:[{type:'bar', data:items.map(x=>x.v), barWidth:'56%',
+      itemStyle:{borderRadius:[0,5,5,0], color:p => gradient(COLORS[items.length-1-p.dataIndex] || COLORS[0],
+                 COLORS[items.length-1-p.dataIndex] || COLORS[0])},
+      label:{show:true, position:'right', color:P().text, fontSize:11,
+             formatter:p => (p.value/1e12).toFixed(2)}}]
+  });
+}
+function oGrowth(){
+  const ys = yearsFrom(1970);
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}, valueFormatter:v=>v===null?'-':v+'%'},
+    legend:{data:DATA.countries.map(c=>c.name), textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:axis({type:'value', name:'%'}),
+    series: DATA.countries.map((c,i) => lineSeries(c.name,
+      ys.map(y=>val(c.code,'GDP实际增长率',y)), COLORS[i],
+      {lineStyle:{width:c.code===CN?2.6:1.3,color:COLORS[i]}, smooth:.15}))
+  });
+}
+function oPcap(){
+  const ys = yearsFrom(1970);
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}, valueFormatter:v=>v===null?'-':Math.round(v)+' 美元'},
+    legend:{data:DATA.countries.map(c=>c.name), textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:axis({type:'value', name:'美元', axisLabel:{color:P().muted,fontSize:10,
+      formatter:v => v>=1000 ? (v/1000)+'k' : v}}),
+    series: DATA.countries.map((c,i) => lineSeries(c.name,
+      ys.map(y=>val(c.code,'人均GDP(现价美元)',y)), COLORS[i],
+      {lineStyle:{width:c.code===CN?2.6:1.3,color:COLORS[i]}}))
+  });
+}
+function oPop(){
+  const ys = DATA.years;
+  const pop = ys.map(y => {const v=val(CN,'总人口',y);return v===null?null:+(v/1e8).toFixed(2);});
+  const urb = ys.map(y => val(CN,'城镇化率',y));
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}},
+    legend:{data:['总人口','城镇化率'], textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:[axis({type:'value', name:'亿人'}), axis({type:'value', name:'%', min:0, max:100,
+            splitLine:{show:false}})],
+    series:[
+      {name:'总人口', type:'line', data:pop, smooth:.3, showSymbol:false,
+       lineStyle:{width:1,color:COLORS[0]}, itemStyle:{color:COLORS[0]},
+       areaStyle:{color:gradient('rgba(54,198,255,.42)','rgba(54,198,255,0)')}},
+      {name:'城镇化率', type:'line', yAxisIndex:1, data:urb, smooth:.3, showSymbol:false,
+       lineStyle:{width:2.4,color:COLORS[2]}, itemStyle:{color:COLORS[2]}}
+    ]
+  });
+}
+function oTrade(){
+  const ys = yearsFrom(1970);
+  return base({
+    tooltip:{trigger:'axis', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12}, valueFormatter:v=>v===null?'-':v+'%'},
+    legend:{data:['出口占 GDP','进口占 GDP'], textStyle:{color:P().muted,fontSize:10}, top:2},
+    xAxis:axis({type:'category', data:ys, boundaryGap:false}),
+    yAxis:axis({type:'value', name:'%'}),
+    series:[
+      lineSeries('出口占 GDP', ys.map(y=>val(CN,'出口占GDP',y)), COLORS[0],
+        {areaStyle:{color:gradient('rgba(54,198,255,.30)','rgba(54,198,255,0)')}}),
+      lineSeries('进口占 GDP', ys.map(y=>val(CN,'进口占GDP',y)), COLORS[1],
+        {areaStyle:{color:gradient('rgba(139,124,255,.24)','rgba(139,124,255,0)')}})
+    ]
+  });
+}
+function oBubble(){
+  const ys = DATA.years.filter(y => y>=1970 && (y%3===0 || y===DATA.latestYear));
+  const pts = ys.map(y => {
+    const x = val(CN,'人均GDP(现价美元)',y), u = val(CN,'城镇化率',y), g = val(CN,'GDP总量(现价美元)',y);
+    return (x===null||u===null||g===null) ? null : {value:[x,u,g/1e12,y], year:y};
+  }).filter(Boolean);
+  return base({
+    tooltip:{trigger:'item', backgroundColor:'rgba(9,26,45,.94)', borderColor:'rgba(70,160,240,.4)',
+             textStyle:{color:'#e8f4ff',fontSize:12},
+             formatter:p => p.data.year+' 年<br/>人均 GDP：'+Math.round(p.value[0])+
+               ' 美元<br/>城镇化率：'+p.value[1].toFixed(1)+'%<br/>GDP：'+p.value[2].toFixed(2)+' 万亿美元'},
+    legend:{show:false},
+    grid:{left:58,right:26,top:22,bottom:32,containLabel:true},
+    xAxis:axis({type:'value', name:'人均 GDP(美元)', nameLocation:'middle', nameGap:26}),
+    yAxis:axis({type:'value', name:'城镇化率 %'}),
+    visualMap:{show:false, min:DATA.years[0], max:DATA.latestYear, dimension:3,
+      inRange:{color:['#8b7cff','#36c6ff','#3ddc97','#ffc75a']}},
+    series:[{type:'scatter', data:pts,
+      symbolSize:p => Math.max(8, Math.min(38, Math.sqrt(p[2])*8)),
+      itemStyle:{opacity:.82, borderColor:'rgba(255,255,255,.35)', borderWidth:1}}]
+  });
+}
+
+const BUILDERS = {c_gdp:oGdp, c_struct:oStruct, c_cpi:oCpi, c_rank:oRank,
+                  c_growth:oGrowth, c_pcap:oPcap, c_pop:oPop, c_trade:oTrade, c_bubble:oBubble};
+function renderAll(){
+  Object.keys(BUILDERS).forEach(id => charts[id].setOption(BUILDERS[id](), true));
+}
+function init(){
+  Object.keys(BUILDERS).forEach(id => charts[id] = echarts.init($(id)));
+  const sl = $('yearSlider');
+  sl.min = DATA.years[0]; sl.max = DATA.latestYear; sl.value = state.year;
+  sl.addEventListener('input', e => {state.year = +e.target.value; onYear();});
+  $('playBtn').addEventListener('click', togglePlay);
+  $('themeBtn').addEventListener('click', () => {
+    state.light = !state.light;
+    document.body.classList.toggle('light', state.light);
+    $('themeBtn').textContent = state.light ? '切换深色' : '切换浅色';
+    renderAll();
+  });
+  $('genTime').textContent = DATA.generated;
+  tick(); setInterval(tick, 1000);
+  onYear(); renderAll();
+  window.addEventListener('resize', () => Object.values(charts).forEach(c => c.resize()));
+}
+function onYear(){
+  $('yearLabel').textContent = state.year;
+  $('yearSlider').value = state.year;
+  renderKpis();
+  charts.c_rank.setOption(oRank(), true);
+}
+function togglePlay(){
+  const btn = $('playBtn');
+  if (state.timer){ clearInterval(state.timer); state.timer=null; btn.textContent='自动播放'; return; }
+  btn.textContent = '暂停播放';
+  state.timer = setInterval(() => {
+    state.year = state.year >= DATA.latestYear ? DATA.years[0] : state.year + 1;
+    onYear();
+  }, 750);
+}
+function tick(){
+  const d = new Date();
+  $('clock').textContent = d.toLocaleDateString('zh-CN') + '  ' +
+    d.toLocaleTimeString('zh-CN', {hour12:false});
+}
+init();
+</script>
+</body>
+</html>
+"""
+
+
+def main():
+    rows = load_long(os.path.join(DATA_DIR, LONG_CSV))
+    if not rows:
+        raise RuntimeError("长表为空，请先运行 B1 下载数据")
+    payload = build_payload(rows)
+    html = (TEMPLATE.replace("__ECHARTS__", get_echarts())
+                    .replace("__DATA__", json.dumps(payload, ensure_ascii=False,
+                                                   separators=(",", ":"))))
+    path = os.path.join(_HERE, HTML_OUT)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"数据：{len(rows)} 行 / {len(payload['years'])} 个年份 / "
+          f"最新年 {payload['latestYear']}")
+    print(f"大屏：{path}（{os.path.getsize(path)/1024:.0f} KB，单文件离线可用）")
+    return path
+
+
+if __name__ == "__main__" or True:
+    main()
