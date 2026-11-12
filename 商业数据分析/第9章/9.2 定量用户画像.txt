@@ -1,0 +1,240 @@
+# -*- coding: utf-8 -*-
+"""
+9.2 定量用户画像 —— 可视化
+===========================
+复现《信用卡客户画像.pptx》里的 6 张图（业务总体描述 + 4.5 定量用户画像）：
+  91a 发卡趋势            —— slide3：按发卡年份、卡型的堆积面积图
+  91b 持卡类型占比        —— slide3：饼图 73.9% / 16.3% / 9.9%
+  92a 持卡类型的性别比较  —— slide9：sex vs type 100% 堆积柱
+  92b 持卡类型的年龄比较  —— slide9：age | type 箱线图
+  93a 办卡前一年内的平均收入      —— slide10：一年窗口总入账（amount2）箱线图
+  93b 办卡前一年内的平均帐户余额  —— slide10：一年窗口平均余额箱线图
+
+说明：slide10 标题写“平均收入”，但图轴刻度到 120 万、四分位在 20~55 万，
+对应的是教材 SQL var3 里的 trans_in_amount（一年内入账总额），不是单笔均值
+（单笔均值中位数只有 6 千左右，量级对不上）。所以 93a 按总额画。
+
+数据源与宽表构建逻辑与 9.1 完全一致（为了单 cell 可运行，这里重新算一遍）。
+"""
+
+import os
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# ============================ 可调参数 ============================
+DATA_DIR = (r"C:\Users\LENOVO\Desktop\CDA 教材资料2025"
+            r"\1《CDA 一级认证教材：商业数据分析》"
+            r"\第9章 用户标签体系与用户画像专题\data"
+            r"\在Mysql中创建数据\mysql_csv")
+WINDOW_DAYS = 365        # 发卡前取数窗口（教材第二套代码：一年）
+TRANS_USECOLS = [1, 2, 3, 5, 6]
+TRANS_NROWS = None
+DPI = 150
+# PPT 图配色：slide9 性别粉/浅蓝；箱线图按 x 位置取 matplotlib 默认三色
+C_F, C_M = "#F4A9A9", "#A9C6E8"
+C_POS = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+# ==================================================================
+
+
+def read_csv_auto(fname, columns, usecols=None, nrows=None):
+    """编码混用：先试 UTF-8 再退 GB18030（反过来会静默读成乱码）。"""
+    path = os.path.join(DATA_DIR, fname)
+    last_err = None
+    for enc in ("utf-8-sig", "gb18030", "gbk", "latin-1"):
+        try:
+            kw = dict(header=None, names=columns, encoding=enc,
+                      skipinitialspace=True, nrows=nrows)
+            if usecols is not None:
+                kw["usecols"] = usecols
+            return pd.read_csv(path, **kw)
+        except UnicodeDecodeError as e:
+            last_err = e
+    raise RuntimeError("所有编码都读不了 {}: {}".format(fname, last_err))
+
+
+def build_creditcard():
+    """与 9.1 相同的 var1 / var2 / var3 / Creditcard 流水线。"""
+    card = read_csv_auto("Kdd99_card.csv", ["card_id", "disp_id", "issued", "type"])
+    disp = read_csv_auto("Kdd99_disp.csv",
+                         ["disp_id", "client_id", "account_id", "disp_type"])
+    clients = read_csv_auto("Kdd99_clients.csv",
+                            ["client_id", "sex", "birth_date", "district_id"])
+    trans = read_csv_auto("Kdd99_trans.csv",
+                          ["trans_id", "account_id", "date", "type", "operation",
+                           "amount", "balance", "k_symbol", "bank", "account"],
+                          usecols=TRANS_USECOLS, nrows=TRANS_NROWS)
+    card["issued"] = pd.to_datetime(card["issued"])
+    clients["birth_date"] = pd.to_datetime(clients["birth_date"])
+    trans["date"] = pd.to_datetime(trans["date"])
+
+    var1 = (card.merge(disp[["disp_id", "client_id", "account_id"]],
+                       on="disp_id", how="left")
+                .merge(clients[["client_id", "sex", "birth_date"]],
+                       on="client_id", how="left"))
+    var1["age"] = (var1["issued"] - var1["birth_date"]).dt.days / 365
+
+    m = var1[["card_id", "disp_id", "account_id", "issued"]].merge(
+        trans[["account_id", "date", "type", "amount", "balance"]],
+        on="account_id", how="left")
+    pre = m[m["issued"] > m["date"]].copy()
+    pre["last_days"] = (pre["issued"] - pre["date"]).dt.days
+
+    mx = pre.groupby("card_id")["date"].max().rename("max_date")
+    last_day = pre.merge(mx, left_on="card_id", right_index=True)
+    last_day = last_day[last_day["date"] == last_day["max_date"]]
+    var2 = last_day.groupby(["card_id", "disp_id", "issued"]).agg(
+        last_days=("last_days", "first"), balance=("balance", "mean")).reset_index()
+
+    win = pre[pre["date"] > pre["issued"] - pd.Timedelta(days=WINDOW_DAYS)]
+    g = win.groupby(["card_id", "disp_id"])
+    vin = win[win["type"] == "借"].groupby(["card_id", "disp_id"])["amount"]
+    vout = win[win["type"] == "贷"].groupby(["card_id", "disp_id"])["amount"]
+    var3 = pd.DataFrame({
+        "trans_count": g["amount"].count(),
+        "trans_in_amount": vin.sum(),
+        "trans_out_amount": vout.sum(),
+        "avg_balance": g["balance"].mean(),
+    }).fillna(0).reset_index()
+
+    df = (var1.merge(var2[["card_id", "last_days", "balance"]],
+                     on="card_id", how="left")
+              .merge(var3.drop(columns=["disp_id"]), on="card_id", how="left")
+              .sort_values("card_id").reset_index(drop=True))
+    return df
+
+
+def save(fig, fname):
+    p = os.path.join(CHART_DIR, fname)
+    fig.savefig(p, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print("  已生成", os.path.basename(p))
+
+
+def chart_trend(df):
+    """91a 发卡趋势：年份 x 卡型 堆积面积（PPT 底层青年卡蓝、中层普通卡橙、顶层金卡绿）。"""
+    ct = pd.crosstab(df["issued"].dt.year, df["type"])
+    ct = ct[["青年卡", "普通卡", "金卡"]]                     # 自下而上
+    fig, ax = plt.subplots(figsize=(7, 4.2))
+    ax.stackplot(ct.index, [ct[c].values for c in ct.columns],
+                 labels=list(ct.columns), colors=C_POS)
+    ax.set_title("发卡趋势")
+    ax.set_xlabel("年份")
+    ax.set_ylabel("发卡量")
+    ax.set_xlim(1993, 1998)
+    ax.legend(loc="upper left")
+    save(fig, "91a_发卡趋势.png")
+
+
+def chart_pie(df):
+    """91b 持卡类型占比：饼图 73.9 / 16.3 / 9.9。"""
+    pct = df["type"].value_counts()
+    pct = pct[["普通卡", "青年卡", "金卡"]]
+    fig, ax = plt.subplots(figsize=(5.2, 4.6))
+    ax.pie(pct.values, labels=pct.index, autopct="%.1f%%", startangle=90,
+           counterclock=False, colors=C_POS[:len(pct)])
+    ax.set_title("持卡类型占比（共 {} 张卡）".format(len(df)))
+    save(fig, "91b_持卡类型占比.png")
+
+
+def chart_sex(df):
+    """92a sex vs type：各卡型性别构成的 100% 堆积柱。"""
+    tab = pd.crosstab(df["type"], df["sex"], normalize="index")
+    order = ["普通卡", "金卡", "青年卡"]
+    tab = tab.loc[order]
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    x = range(len(order))
+    ax.bar(x, tab["女"], width=0.55, color=C_F, label="sex：女")
+    ax.bar(x, tab["男"], width=0.55, bottom=tab["女"], color=C_M, label="sex：男")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(order)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("sex")
+    ax.set_title("持卡类型的性别比较（sex vs type）")
+    ax.legend(loc="upper right", fontsize=9)
+    for i, t in enumerate(order):                            # 柱内标比例
+        ax.text(i, tab.loc[t, "女"] / 2, "{:.1%}".format(tab.loc[t, "女"]),
+                ha="center", va="center", fontsize=9)
+    save(fig, "92a_性别构成.png")
+
+
+def _box_by_type(ax, df, col, order):
+    """PPT 风格箱线图：按 x 位置给箱体上色（蓝/橙/绿）。"""
+    data = [df.loc[df["type"] == t, col].dropna().values for t in order]
+    boxes = ax.boxplot(data, patch_artist=True, tick_labels=order,
+                       flierprops=dict(marker="d", markersize=4))
+    for box, c in zip(boxes["boxes"], C_POS):
+        box.set_facecolor(c)
+        box.set_alpha(0.85)
+    for w in boxes["whiskers"] + boxes["caps"]:
+        w.set_color("#444444")
+    for med in boxes["medians"]:
+        med.set_color("#222222")
+    ax.set_xlabel("type")
+
+
+def chart_age(df):
+    """92b age | type：年龄箱线（普通卡 ~43 岁、青年卡 ~19 岁、金卡 ~44 岁）。"""
+    order = ["普通卡", "青年卡", "金卡"]
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    _box_by_type(ax, df, "age", order)
+    ax.set_ylabel("age")
+    ax.set_title("持卡类型的年龄比较（age | type）")
+    save(fig, "92b_年龄箱线.png")
+
+
+def chart_in_amount(df):
+    """93a amount2 | type：办卡前一年内入账总额箱线（PPT 标题写“平均收入”）。"""
+    order = ["普通卡", "金卡", "青年卡"]
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    _box_by_type(ax, df, "trans_in_amount", order)
+    ax.set_ylabel("amount2（元）")
+    ax.set_title("办卡前一年内的平均收入\n（实为一年窗口内入账总额 trans_in_amount）")
+    save(fig, "93a_一年内入账箱线.png")
+
+
+def chart_avg_balance(df):
+    """93b avg_balance | type：一年窗口内平均账户余额箱线。"""
+    order = ["普通卡", "金卡", "青年卡"]
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    _box_by_type(ax, df, "avg_balance", order)
+    ax.set_ylabel("avg_balance（元）")
+    ax.set_title("办卡前一年内的平均帐户余额")
+    save(fig, "93b_平均余额箱线.png")
+
+
+def main():
+    df = build_creditcard()
+    print("画像宽表 {} 行，开始出图（输出目录：{}）".format(len(df), CHART_DIR))
+    chart_trend(df)
+    chart_pie(df)
+    chart_sex(df)
+    chart_age(df)
+    chart_in_amount(df)
+    chart_avg_balance(df)
+
+    # 核对：与 PPT 图上可读出的数值比对
+    pct = df["type"].value_counts(normalize=True).mul(100).round(1)
+    fem = pd.crosstab(df["type"], df["sex"], normalize="index")["女"].round(3)
+    med = df.groupby("type")["age"].median().round(1)
+    print("\n[核对] 持卡类型占比：", pct[["普通卡", "青年卡", "金卡"]].to_dict(),
+          "（PPT 饼图 73.9 / 16.3 / 9.9）")
+    print("[核对] 女性占比：", fem[["普通卡", "金卡", "青年卡"]].to_dict(),
+          "（PPT sex vs type 约 0.48 / 0.40 / 0.50）")
+    print("[核对] 年龄中位数：", med[["普通卡", "青年卡", "金卡"]].to_dict(),
+          "（PPT age|type 约 43 / 19 / 44）")
+    print("\n6 张图已全部生成，位于:", CHART_DIR)
+
+
+main()

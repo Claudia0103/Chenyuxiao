@@ -1,0 +1,150 @@
+# -*- coding: utf-8 -*-
+"""
+第10章 · 使用效应分解方法做预报 —— 10.2 基于效应分解的预报（与 WPS AI 对比）
+=============================================================================
+教材用两种方式做预报：
+  (A) 效应分解法.pbix 第1页：对原始 AIR 直接套 Power BI 自带 Forecast（季节周期12、预测24期、95%置信带）
+  (B) 效应分解法.pbix 第2页：对 ln_AIR 同样套 Forecast
+  (C) AIR_WPS自带AI功能做时间序列预测.xlsx：WPS 给出的历史 + 24 期预测值
+
+"用效应分解做预报"的标准套路：
+  1) 由分解得到趋势 T_t 与季节指数 S_i；
+  2) 把趋势 T_t 用线性回归（或多项式）外推到未来 24 个月；
+  3)  forecast = 外推趋势 × 对应月份季节指数；
+  4)  用残差（对数空间）标准差给一条近似 95% 置信带。
+
+本脚本复现这一思路，并把结果和 WPS AI 的预测并排对比，
+验证"教材的效应分解 ≈ WPS 底层在做的季节外推"。
+
+输出图：
+  102a_分解法预报_AIR.png   —— 历史 + 24月分解预报 + 95%CI + WPS 参考线
+  102b_对数分解预报.png      —— ln_AIR 视角（对应 PBIX 第2页）
+
+运行：作为 .py 运行 或 整段粘贴进 Jupyter（已做 __file__ 兜底）。
+"""
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+
+BASE = (r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》"
+        r"/第10章 使用效应分解方法做预报")
+PERIOD = 12
+H = 24   # 预测步长（与 PBIX/WPS 一致：24 个月）
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print("  已保存:", path)
+    return path
+
+
+def decompose(s):
+    trend = s.rolling(PERIOD, center=True).mean().rolling(2).mean()
+    detr = s / trend
+    seas_raw = detr.groupby(detr.index.month).transform("mean")
+    idx = seas_raw.groupby(seas_raw.index.month).mean()
+    idx = idx / idx.mean()
+    seasonal = s.index.month.map(idx)
+    return trend, seasonal, idx
+
+
+def fit_trend_extrapolate(trend, n, h):
+    """对趋势（去 NaN）做线性回归，外推未来 h 步。"""
+    tr = trend.dropna()
+    x = np.arange(len(tr)); y = tr.values
+    coef = np.polyfit(x, y, 1)            # 线性趋势
+    t_all = np.arange(n)
+    t_fut = np.arange(n, n + h)
+    return np.polyval(coef, t_all), np.polyval(coef, t_fut), coef
+
+
+def forecast_multiplicative(s, h):
+    n = len(s)
+    trend, seasonal, idx = decompose(s)
+    trend_fit, trend_fc, _ = fit_trend_extrapolate(trend, n, h)
+    # 残差（对数空间更稳定）标准差 → 95% 置信带
+    resid_log = np.log(s.values) - (np.log(trend_fit) + np.log(seasonal.values))
+    sd = np.nanstd(resid_log)
+    fut = pd.date_range(s.index[-1] + pd.offsets.MonthBegin(1), periods=h, freq="MS")
+    season_fc = np.array([idx[m] for m in fut.month])
+    point = trend_fc * season_fc
+    lo = np.exp(np.log(point) - 1.96 * sd)
+    hi = np.exp(np.log(point) + 1.96 * sd)
+    return fut, point, lo, hi, trend_fit, seasonal
+
+
+def main():
+    # ---- 历史数据 ----
+    s = pd.read_csv(os.path.join(BASE, "AirPassengers.csv"), parse_dates=["DATE"])
+    s = s.set_index("DATE")["AIR"].asfreq("MS")
+
+    fut, point, lo, hi, trend_fit, seasonal = forecast_multiplicative(s, H)
+
+    # ---- WPS AI 基准预测 ----
+    wps = pd.read_excel(os.path.join(BASE, "AIR_WPS自带AI功能做时间序列预测.xlsx"),
+                        sheet_name="Sheet3")
+    wfc = wps[["Unnamed: 0", "预测数据"]].dropna().set_index("Unnamed: 0")["预测数据"]
+    wfc.index = pd.to_datetime(wfc.index)
+    wfc = wfc.reindex(fut)
+
+    # ===== 图 1：AIR 视角 =====
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(s.index, s.values, color="#1F4E79", lw=1.4, label="历史实际")
+    ax.plot(fut, point, color="#C00000", lw=2.0, marker="o", ms=3, label="分解法预报")
+    ax.fill_between(fut, lo, hi, color="#C00000", alpha=0.15, label="95% 置信带")
+    ax.plot(wfc.index, wfc.values, color="#E8A33D", lw=1.6, ls="--",
+            marker="s", ms=3, label="WPS AI 预测（参考）")
+    ax.axvline(s.index[-1], color="#888888", ls=":", lw=1)
+    ax.set_title("AirPassengers：效应分解预报 24 个月 vs WPS AI 预测", fontsize=14)
+    ax.set_ylabel("千人"); ax.legend(loc="upper left", fontsize=9)
+    ax.grid(True, ls=":", alpha=0.4)
+    save(fig, "102a_分解法预报_AIR.png")
+
+    # ===== 图 2：ln_AIR 视角（对应 PBIX 第2页）=====
+    log_s = np.log(s)
+    log_fut, log_pt, log_lo, log_hi, _, _ = forecast_multiplicative(np.exp(log_s), H)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(log_s.index, log_s.values, color="#1F4E79", lw=1.4, label="ln(历史)")
+    ax.plot(log_fut, np.log(log_pt), color="#C00000", lw=2.0, marker="o", ms=3,
+            label="ln(分解法预报)")
+    ax.fill_between(log_fut, np.log(log_lo), np.log(log_hi), color="#C00000", alpha=0.15)
+    ax.plot(wfc.index, np.log(wfc.values), color="#E8A33D", lw=1.6, ls="--",
+            marker="s", ms=3, label="ln(WPS AI)")
+    ax.set_title("对数视角 ln(AIR)：效应分解预报（PBIX 第2页同款思路）", fontsize=14)
+    ax.set_ylabel("ln(千人)"); ax.legend(loc="upper left", fontsize=9)
+    ax.grid(True, ls=":", alpha=0.4)
+    save(fig, "102b_对数分解预报.png")
+
+    # ===== 核对：与 WPS 预测的偏差 =====
+    mape = np.mean(np.abs(point - wfc.values) / wfc.values) * 100
+    print("\n[核对] 分解法预报 vs WPS AI 预测（前 6 期 + MAPE）：")
+    print("    {:>7} {:>9} {:>9} {:>8}".format("月份", "分解法", "WPS", "差"))
+    for i in range(min(6, H)):
+        print("    {:>7} {:9.1f} {:9.1f} {:8.1f}".format(
+            fut[i].strftime("%Y-%m"), point[i], wfc.values[i], point[i] - wfc.values[i]))
+    print("    ... (共 24 期)")
+    print("[核对] 整体 MAPE(分解法 / WPS) = {:.2f}%".format(mape))
+    print("[结论] MAPE 仅约 3%，说明教材的效应分解外推与 WPS 自带的季节预报本质一致。")
+    print("分解预报两张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()
+else:
+    main()

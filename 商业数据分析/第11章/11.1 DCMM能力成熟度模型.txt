@@ -1,0 +1,216 @@
+# 11.1_DCMM能力成熟度模型.py
+# ============================================================
+# 第11章 数据治理介绍 —— Python 复现（一）
+# 作业要求：教材里引用的国家标准，理解其“项目内涵”后用 Python 复现。
+#
+# 素材：GBT 36073-2018《数据管理能力成熟度评估模型》.pdf
+#       （该 PDF 为扫描影印件，无法直接抽取文字；以下 8 个能力域、能力项
+#        及 5 个成熟度等级，依据 GB/T 36073-2018 标准公开发布的模型结构整理，
+#        属于国家标准固定内容，非推算数据。）
+#
+# 复现内容：
+#   1) DCMM 的 8 个能力域及其下属能力项（结构化 DataFrame，可打印、可核对）
+#   2) 5 个成熟度等级（初始级→优化级）的定义与核心特征
+#   3) 能力域 × 成熟度 的“典型达标要求”矩阵（彩色热力表，便于一眼看清差距）
+#   4) 成熟度演进路线图（1→5 级的阶梯式爬坡图）
+#
+# 本章没有业务数值，复现的是“模型/框架本身”。
+# ============================================================
+
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ============================================================
+# 1) DCMM 8 个能力域 + 能力项（GB/T 36073-2018 标准模型）
+# ============================================================
+# 每个能力域 dict：name 中文名 / en 英文名 / items 能力项列表
+DCMM_DOMAINS = [
+    {"name": "数据战略", "en": "Data Strategy",
+     "items": ["数据战略规划", "数据战略实施", "数据战略评估"]},
+    {"name": "数据治理", "en": "Data Governance",
+     "items": ["数据治理组织", "数据制度建设", "数据治理沟通"]},
+    {"name": "数据架构", "en": "Data Architecture",
+     "items": ["数据模型", "数据分布", "数据集成与共享", "元数据管理"]},
+    {"name": "数据应用", "en": "Data Application",
+     "items": ["数据分析", "数据开放共享", "数据服务"]},
+    {"name": "数据安全", "en": "Data Security",
+     "items": ["数据安全策略", "数据安全管理", "数据安全审计"]},
+    {"name": "数据质量", "en": "Data Quality",
+     "items": ["数据质量需求", "数据质量检查", "数据质量分析", "数据质量提升"]},
+    {"name": "数据标准", "en": "Data Standard",
+     "items": ["业务术语", "参考数据和主数据", "数据元", "指标数据"]},
+    {"name": "数据生命周期", "en": "Data Lifecycle",
+     "items": ["数据需求", "数据设计和开发", "数据运维", "数据退役"]},
+]
+
+# 5 个成熟度等级（GB/T 36073-2018 第 5 章）
+MATURITY_LEVELS = [
+    {"lv": 1, "name": "初始级", "en": "Initial",
+     "desc": "数据需求主要在项目级体现，没有统一的管理流程，以被动式管理为主。"},
+    {"lv": 2, "name": "受管理级", "en": "Managed",
+     "desc": "意识到数据是资产，按管理策略制定了管理流程，并指定人员进行初步管理。"},
+    {"lv": 3, "name": "稳健级", "en": "Defined",
+     "desc": "数据被视为实现绩效目标的重要资产，组织层面建立了标准化管理流程，管理规范化。"},
+    {"lv": 4, "name": "量化管理级", "en": "Quantitatively Managed",
+     "desc": "数据被视为获取竞争优势的重要资源，数据管理的过程与结果可量化分析与监控。"},
+    {"lv": 5, "name": "优化级", "en": "Optimizing",
+     "desc": "数据被视为组织生存的基础，管理流程可实时优化，并向行业分享最佳实践。"},
+]
+
+# 能力域 -> 在该标准典型评估中“普遍可达/重点建设”的成熟度目标（用于矩阵着色，非强制结论）
+# 仅作教学示意：基础域普遍要求达到稳健级(3)，战略/治理/安全强调更高。
+DOMAIN_TARGET = {
+    "数据战略": 3, "数据治理": 3, "数据架构": 3, "数据应用": 3,
+    "数据安全": 4, "数据质量": 3, "数据标准": 3, "数据生命周期": 3,
+}
+
+# ============================================================
+# 2) 打印能力域与能力项全景（结构化核对）
+# ============================================================
+def build_domain_table():
+    rows = []
+    for d in DCMM_DOMAINS:
+        rows.append({
+            "能力域": d["name"],
+            "英文": d["en"],
+            "能力项数量": len(d["items"]),
+            "能力项": "、".join(d["items"]),
+        })
+    return pd.DataFrame(rows)
+
+print("=" * 70)
+print("DCMM 数据管理能力成熟度模型 —— 8 个能力域与能力项全景")
+print("=" * 70)
+df_dom = build_domain_table()
+print(df_dom.to_string(index=False))
+print(f"\n能力域总数：{len(DCMM_DOMAINS)}    能力项总数：{sum(len(d['items']) for d in DCMM_DOMAINS)}")
+
+print("\n" + "=" * 70)
+print("5 个成熟度等级定义")
+print("=" * 70)
+for m in MATURITY_LEVELS:
+    print(f"  L{m['lv']} {m['name']}（{m['en']}）：{m['desc']}")
+
+# ============================================================
+# 3) 图一：能力域 × 成熟度 典型达标要求矩阵（彩色热力表）
+# ============================================================
+def plot_domain_matrix():
+    domains = [d["name"] for d in DCMM_DOMAINS]
+    levels = [m["name"] for m in MATURITY_LEVELS]
+    # 矩阵值：1~5，目标等级及其以下为达标(1)，以上为待提升(0)；用连续深浅表示“距离目标的远近”
+    mat = np.zeros((len(domains), len(levels)))
+    for i, dname in enumerate(domains):
+        target = DOMAIN_TARGET[dname]
+        for j, lv_obj in enumerate(MATURITY_LEVELS):
+            # 已达标 = 1.0；差1级 = 0.6；差2级 = 0.3；更远 = 0.1
+            diff = target - lv_obj["lv"]
+            mat[i, j] = 1.0 if diff >= 0 else max(0.1, 0.6 + 0.25 * diff)
+    fig, ax = plt.subplots(figsize=(9.5, 6.2))
+    cmap = plt.cm.Greens
+    im = ax.imshow(mat, cmap=cmap, vmin=0.05, vmax=1.0, aspect="auto")
+    ax.set_xticks(range(len(levels)))
+    ax.set_xticklabels(levels)
+    ax.set_yticks(range(len(domains)))
+    ax.set_yticklabels(domains)
+    ax.set_title("DCMM 能力域 × 成熟度：典型达标要求矩阵（示意）\n"
+                 "颜色越深 = 越接近/已达到该能力域的目标成熟度", fontsize=12, fontweight="bold")
+    for i in range(len(domains)):
+        t = DOMAIN_TARGET[domains[i]]
+        for j, lv_obj in enumerate(MATURITY_LEVELS):
+            reached = lv_obj["lv"] <= t
+            mark = "●" if reached else "○"
+            ax.text(j, i, mark, ha="center", va="center",
+                    color="white" if mat[i, j] > 0.5 else "#333333", fontsize=11)
+    # 右侧标注各域目标等级
+    for i, dname in enumerate(domains):
+        ax.text(len(levels) + 0.35, i, f"目标 L{DOMAIN_TARGET[dname]}",
+                ha="left", va="center", fontsize=9, color="#1a6e2e")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+    cbar.set_label("达标程度", fontsize=9)
+    ax.set_xlim(-0.5, len(levels) + 0.9)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "11.1_DCMM能力域成熟度矩阵.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+# ============================================================
+# 4) 图二：成熟度演进路线图（阶梯爬坡）
+# ============================================================
+def plot_roadmap():
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    xs = [m["lv"] for m in MATURITY_LEVELS]
+    ys = [m["lv"] for m in MATURITY_LEVELS]
+    # 阶梯线
+    ax.step(xs, ys, where="mid", color="#2c7fb8", linewidth=2.5)
+    colors = ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]
+    for x, y, m, c in zip(xs, ys, MATURITY_LEVELS, colors):
+        ax.scatter(x, y, s=420, color=c, edgecolor="#333", zorder=3)
+        ax.text(x, y + 0.18, f"L{y}\n{m['name']}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+    # 阶段说明
+    phase_notes = {
+        1: "被动、项目级",
+        2: "有流程、专人管",
+        3: "组织级标准化",
+        4: "量化监控",
+        5: "持续最优",
+    }
+    for x, y in zip(xs, ys):
+        ax.text(x, y - 0.42, phase_notes[x], ha="center", va="top", fontsize=8, color="#555")
+    ax.set_xlim(0.4, 5.6)
+    ax.set_ylim(0.3, 5.7)
+    ax.set_xticks(xs)
+    ax.set_xlabel("成熟度等级（L1→L5）", fontsize=10)
+    ax.set_ylabel("能力建设水平", fontsize=10)
+    ax.set_title("DCMM 数据管理能力成熟度演进路线图", fontsize=13, fontweight="bold")
+    ax.grid(True, axis="y", linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "11.1_成熟度演进路线图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+# ============================================================
+# 5) 图三：能力域能力项数量条形图（看各域建设工作量）
+# ============================================================
+def plot_item_counts():
+    domains = [d["name"] for d in DCMM_DOMAINS]
+    counts = [len(d["items"]) for d in DCMM_DOMAINS]
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars = ax.barh(domains, counts, color="#4292c6", edgecolor="#1f5c8a")
+    for b, c in zip(bars, counts):
+        ax.text(b.get_width() + 0.05, b.get_y() + b.get_height() / 2, str(c),
+                va="center", fontsize=10, fontweight="bold")
+    ax.set_xlabel("能力项数量", fontsize=10)
+    ax.set_title("DCMM 各能力域下属能力项数量", fontsize=13, fontweight="bold")
+    ax.invert_yaxis()
+    ax.set_xlim(0, max(counts) + 0.8)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "11.1_能力项数量.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+if __name__ == "__main__":
+    print("\n开始绘制 DCMM 可视化图表 ...")
+    plot_domain_matrix()
+    plot_roadmap()
+    plot_item_counts()
+    print("\n11.1 完成：DCMM 能力成熟度模型复现完毕。")

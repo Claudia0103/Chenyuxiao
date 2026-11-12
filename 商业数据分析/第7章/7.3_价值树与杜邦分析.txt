@@ -1,0 +1,262 @@
+# 7.3_价值树与杜邦分析.py
+# ============================================================
+# 第7章 指标体系构建方法 —— Python 复现（三）
+# 课件第 11 页（价值树 / 杜邦分析）、第 19 页（以 ROA 为例搭建经营数据指标体系）
+#
+# 教材给了两张树状图（都在 PPT 的图片里，不是 Excel 表）：
+#   · image14.png「价值树分解」：资产回报率 = 税后净利润 / 总资产，
+#     收入按租赁/售房拆，成本按项目与费用科目拆，资产按流动/固定拆
+#   · image12.png「杜邦分析」：权益净利率 = 销售净利率 × 总资产周转率 × 权益乘数
+#
+# 复现方式：把树写成「父节点 → 子节点」的数据结构，叶子给数，逐层往上算，
+# 再用 assert 检查恒等式（ROE 三因子连乘 = 净利/权益）。这就是价值树的用处：
+# 指标掉了，能顺着树找到是哪一层、哪个科目出的问题。
+#
+# 【重要】教材只给了树的结构，没给任何金额。下面全是自洽的演示参数，
+#        改「可调参数」区即可重算，不是教材答案。
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ============================================================
+# 可调参数：演示用金额（非教材数值）
+# ============================================================
+LEASE_PRICE, LEASE_AREA = 80, 5_000             # 租赁收入 = 平均单价 × 结转租赁面积
+SALE_PRICE, SALE_AREA = 12_000, 300             # 售房收入 = 平均单价 × 结转销售面积
+PROJECT_COST = {                                # 销售成本：按项目 × 费用科目
+    "项目一": {"土地费用": 500_000, "前期费用": 80_000, "公建配套": 40_000, "基础设施": 30_000},
+    "项目二": {"土地费用": 350_000, "前期费用": 60_000, "公建配套": 30_000, "基础设施": 20_000},
+    "项目三": {"土地费用": 60_000, "前期费用": 10_000, "公建配套": 10_000, "基础设施": 10_000},
+}
+SELL_EXP = {"广宣费用": 150_000, "渠道费用": 200_000, "建筑工程费用": 100_000}
+ADMIN_EXP = {"员工费用": 180_000, "交通费用": 60_000, "其他": 20_000}
+FIN_EXP = {"手续费": 10_000, "利息": 50_000}
+OTHER_PROFIT = 30_000
+INCOME_TAX = 500_000
+CURRENT_ASSETS = {"现金有价证券": 1_500_000, "应收账款": 1_800_000,
+                  "存货": 2_200_000, "其他流动资产": 500_000}
+LONG_TERM_ASSETS = 4_000_000
+EQUITY = 6_000_000                              # 所有者权益（算权益乘数用）
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", path)
+
+
+def node(ax, x, y, w, h, text, fc, fontsize=8.5, tc="white"):
+    ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.008,rounding_size=0.01",
+                                facecolor=fc, edgecolor="white", linewidth=1))
+    ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=fontsize, color=tc)
+
+
+def link(ax, x1, y1, x2, y2, color="#A9B4C2"):
+    ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-",
+                                 linewidth=0.9, color=color))
+
+
+def build_value_tree():
+    """按教材 image14 的层级，叶子给数、逐层往上算，返回 (数值字典, 树结构表)。"""
+    lease_rev = LEASE_PRICE * LEASE_AREA
+    sale_rev = SALE_PRICE * SALE_AREA
+    sales_rev = lease_rev + sale_rev
+    cost = sum(sum(v.values()) for v in PROJECT_COST.values())
+    sell = sum(SELL_EXP.values())
+    admin = sum(ADMIN_EXP.values())
+    fin = sum(FIN_EXP.values())
+    ebit = sales_rev - cost - sell - admin + OTHER_PROFIT - fin
+    net_profit = ebit - INCOME_TAX
+    current = sum(CURRENT_ASSETS.values())
+    total_assets = current + LONG_TERM_ASSETS
+    roa = net_profit / total_assets
+
+    v = {
+        "租赁收入": lease_rev, "售房收入": sale_rev, "销售收入": sales_rev,
+        "销售成本": cost, "销售费用": sell, "管理费用": admin,
+        "其他利润": OTHER_PROFIT, "财务费用": fin,
+        "息税前利润": ebit, "所得税": INCOME_TAX, "税后净利润": net_profit,
+        "流动资产": current, "固定资产": LONG_TERM_ASSETS,
+        "总资产": total_assets, "资产回报率 ROA": roa,
+    }
+    rows = [
+        ("资产回报率 ROA", "税后净利润 / 总资产", "根指标"),
+        ("税后净利润", "息税前利润 - 所得税", "资产回报率 ROA"),
+        ("总资产", "流动资产 + 固定资产", "资产回报率 ROA"),
+        ("息税前利润", "销售收入 - 销售成本 - 销售费用 - 管理费用 + 其他利润 - 财务费用", "税后净利润"),
+        ("销售收入", "租赁收入 + 售房收入", "息税前利润"),
+        ("租赁收入", "平均单价 × 结转租赁面积", "销售收入"),
+        ("售房收入", "平均单价 × 结转销售面积", "销售收入"),
+        ("销售成本", "Σ 项目 × (土地/前期/公建配套/基础设施)", "息税前利润"),
+        ("销售费用", "广宣 + 渠道 + 建筑工程", "息税前利润"),
+        ("管理费用", "员工 + 交通 + 其他", "息税前利润"),
+        ("财务费用", "手续费 + 利息", "息税前利润"),
+        ("流动资产", "现金有价证券 + 应收账款 + 存货 + 其他流动资产", "总资产"),
+    ]
+    tree = pd.DataFrame(rows, columns=["指标", "计算规则", "父指标"])
+    return v, tree
+
+
+def chart_value_tree(v):
+    """73a：横向价值树，根在左，逐层向右展开（对应教材 image14）。"""
+    fig, ax = plt.subplots(figsize=(14, 8))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title("价值树分解：资产回报率 ROA（课件第 19 页）", fontsize=14)
+
+    def fmt(k, pct=False):
+        val = v[k]
+        return "{:.2%}".format(val) if pct else "{:,.0f}".format(val)
+
+    # 固定列布局，每列 (x, 中心y, 宽, 文本, 颜色)
+    layout = [
+        [(0.02, 0.50, 0.13, "资产回报率 ROA\n" + fmt("资产回报率 ROA", True), "#1F3864")],
+        [(0.19, 0.74, 0.14, "税后净利润\n" + fmt("税后净利润"), "#2F5597"),
+         (0.19, 0.26, 0.14, "总资产\n" + fmt("总资产"), "#2F5597")],
+        [(0.38, 0.86, 0.13, "息税前利润\n" + fmt("息税前利润"), "#4C78A8"),
+         (0.38, 0.70, 0.13, "所得税\n" + fmt("所得税"), "#9DC3E6"),
+         (0.38, 0.34, 0.13, "流动资产\n" + fmt("流动资产"), "#4C78A8"),
+         (0.38, 0.18, 0.13, "固定资产\n" + fmt("固定资产"), "#9DC3E6")],
+        [(0.58, 0.94, 0.13, "销售收入\n" + fmt("销售收入"), "#54A24B"),
+         (0.58, 0.80, 0.13, "销售成本\n" + fmt("销售成本"), "#E45756"),
+         (0.58, 0.66, 0.13, "销售费用\n" + fmt("销售费用"), "#E45756"),
+         (0.58, 0.52, 0.13, "管理费用\n" + fmt("管理费用"), "#E45756"),
+         (0.58, 0.38, 0.13, "其他利润\n" + fmt("其他利润"), "#EECA3B"),
+         (0.58, 0.24, 0.13, "财务费用\n" + fmt("财务费用"), "#E45756")],
+        [(0.79, 0.96, 0.17, "租赁收入\n" + fmt("租赁收入"), "#72B7B2"),
+         (0.79, 0.86, 0.17, "售房收入\n" + fmt("售房收入"), "#72B7B2")],
+    ]
+    h = 0.075
+    centers = []
+    for col in layout:
+        cc = []
+        for (x, y, w, txt, color) in col:
+            y0 = y - h / 2
+            node(ax, x, y0, w, h, txt, color, 8.5)
+            cc.append((x, w, y))
+        centers.append(cc)
+
+    def connect(c_from, i_from, c_to, i_to):
+        x1, w1, y1 = centers[c_from][i_from]
+        x2, w2, y2 = centers[c_to][i_to]
+        link(ax, x1 + w1, y1, x2, y2)
+
+    connect(0, 0, 1, 0)
+    connect(0, 0, 1, 1)
+    connect(1, 0, 2, 0)
+    connect(1, 0, 2, 1)
+    connect(1, 1, 2, 2)
+    connect(1, 1, 2, 3)
+    for i in range(6):
+        connect(2, 0, 3, i)
+    connect(3, 0, 4, 0)
+    connect(3, 0, 4, 1)
+    ax.text(0.5, 0.03, "绿=收入  红=成本费用  黄=其他  数值为演示参数，改脚本顶部即可重算",
+            ha="center", fontsize=9, color="#666666")
+    save(fig, "73a_ROA价值树.png")
+
+
+def dupont(v):
+    """杜邦分析：ROE = 销售净利率 × 总资产周转率 × 权益乘数。"""
+    sales = v["销售收入"]
+    cost_all = v["销售成本"] + v["销售费用"] + v["管理费用"] + v["财务费用"]
+    net = sales - cost_all + OTHER_PROFIT - INCOME_TAX
+    margin = net / sales
+    turnover = sales / v["总资产"]
+    multiplier = v["总资产"] / EQUITY
+    roe = margin * turnover * multiplier
+    return {"销售收入": sales, "全部成本": cost_all, "其他利润": OTHER_PROFIT,
+            "所得税": INCOME_TAX, "净利": net, "总资产": v["总资产"],
+            "销售净利率": margin, "总资产周转率": turnover,
+            "权益乘数": multiplier, "权益净利率 ROE": roe}
+
+
+def chart_dupont(d):
+    """73b：杜邦三因子分解 + 各因子的构成。"""
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title("杜邦分析：权益净利率三因子分解（课件第 11 页）", fontsize=14)
+
+    node(ax, 0.36, 0.86, 0.28, 0.09,
+         "权益净利率 ROE  {:.2%}".format(d["权益净利率 ROE"]), "#1F3864", 12)
+    factors = [
+        (0.03, "销售净利率\n{:.2%}".format(d["销售净利率"]),
+         "净利 {:,.0f} / 销售收入 {:,.0f}".format(d["净利"], d["销售收入"]), "#4C78A8"),
+        (0.36, "总资产周转率\n{:.2f}".format(d["总资产周转率"]),
+         "销售收入 {:,.0f} / 总资产 {:,.0f}".format(d["销售收入"], d["总资产"]), "#54A24B"),
+        (0.69, "权益乘数\n{:.2f}".format(d["权益乘数"]),
+         "总资产 / 所有者权益", "#F58518"),
+    ]
+    for x, title, sub, color in factors:
+        node(ax, x, 0.60, 0.28, 0.10, title, color, 10)
+        link(ax, 0.50, 0.86, x + 0.14, 0.70)
+        node(ax, x, 0.46, 0.28, 0.075, sub, "#E8EEF7", 8, "#333333")
+    ax.text(0.175, 0.545, "×", ha="center", fontsize=18, color="#666666")
+    ax.text(0.515, 0.545, "×", ha="center", fontsize=18, color="#666666")
+
+    # 下层：净利与全部成本的构成
+    node(ax, 0.03, 0.26, 0.44, 0.09,
+         "净利 = 销售收入 - 全部成本 + 其他利润 - 所得税\n"
+         "= {:,.0f} - {:,.0f} + {:,.0f} - {:,.0f} = {:,.0f}".format(
+             d["销售收入"], d["全部成本"], d["其他利润"], d["所得税"], d["净利"]),
+         "#D6DEEB", 9, "#14293F")
+    node(ax, 0.53, 0.26, 0.44, 0.09,
+         "全部成本 = 制造成本 + 销售费用 + 管理费用 + 财务费用\n"
+         "总资产 = 长期资产 + 流动资产（现金/应收/存货/其他）",
+         "#D6DEEB", 9, "#14293F")
+    ax.text(0.5, 0.13, "恒等式校验：{:.2%} × {:.2f} × {:.2f} = {:.2%} = 净利 / 权益".format(
+        d["销售净利率"], d["总资产周转率"], d["权益乘数"], d["权益净利率 ROE"]),
+        ha="center", fontsize=10, color="#C00000")
+    save(fig, "73b_杜邦分析.png")
+
+
+def main():
+    v, tree = build_value_tree()
+    d = dupont(v)
+
+    print("=" * 78)
+    print("价值树结构（教材 image14 的层级）")
+    print(tree.to_string(index=False))
+
+    print("\n[ROA 价值树]")
+    for k in ["租赁收入", "售房收入", "销售收入", "销售成本", "销售费用",
+              "管理费用", "其他利润", "财务费用", "息税前利润", "所得税",
+              "税后净利润", "流动资产", "固定资产", "总资产"]:
+        print("  {:<12} = {:>12,.0f}".format(k, v[k]))
+    print("  {:<12} = {:>12.2%}".format("资产回报率 ROA", v["资产回报率 ROA"]))
+
+    print("\n[杜邦分析]")
+    for k in ["销售收入", "全部成本", "其他利润", "所得税", "净利"]:
+        print("  {:<14} = {:>12,.0f}".format(k, d[k]))
+    for k in ["销售净利率", "总资产周转率", "权益乘数", "权益净利率 ROE"]:
+        print("  {:<14} = {:>12.4f}".format(k, d[k]))
+
+    # 两套口径算出来的净利必须一致；杜邦恒等式必须成立
+    assert abs(d["净利"] - v["税后净利润"]) < 1e-6, "价值树与杜邦的净利对不上"
+    assert abs(d["权益净利率 ROE"] - d["净利"] / EQUITY) < 1e-9, "杜邦恒等式不成立"
+    print("\n[校验通过] 价值树净利 = 杜邦净利 = {:,.0f}；ROE 三因子连乘 = 净利/权益".format(d["净利"]))
+
+    chart_value_tree(v)
+    chart_dupont(d)
+    print("\n7.3 完成：ROA 价值树 / 杜邦分析，共 2 张图，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

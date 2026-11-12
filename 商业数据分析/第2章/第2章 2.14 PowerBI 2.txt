@@ -1,0 +1,113 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.15 PowerBI 案例2：服装零售分析 复现
+=============================================================
+原教材实现：PowerBI（5、PowerBI基本操作/案例2/服装零售分析.pbix）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+案例2 是“服装代理商”零售订单明细（3.2 万行），每行一笔成交：
+  订单id / 订单编号 / 订单日期 / 店铺id / 会员id / 员工id / 数量 / 零售金额 / 成交金额
+核心分析套路（对应 PB 看板的“指标卡 + 店铺详情 + 趋势”）：
+  - 折扣率 = 成交金额 / 零售金额（代理商常打折，这比单纯看成交额更真实）
+  - 客单价  = 成交金额 / 订单数
+  - 按 月份 / 店铺 / 是否有会员 做销售对比与趋势
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CASE = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/案例2"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取 ----------
+df = pd.read_excel(f"{CASE}/服装零售-原始数据.xlsx")
+df["订单日期"] = pd.to_datetime(df["订单日期"])
+df["月份"] = df["订单日期"].dt.to_period("M").astype(str)
+df["折扣率"] = df["成交金额"] / df["零售金额"]
+df["是否会员"] = df["会员id"].notna().map({True: "会员", False: "非会员"})
+
+print("【原始数据前 5 行】")
+print(df[["订单编号", "订单日期", "店铺id", "数量", "零售金额", "成交金额", "折扣率"]].head(5).to_string(index=False))
+print(f"总行数 = {len(df)}，时间范围 = {df['订单日期'].min().date()} ~ {df['订单日期'].max().date()}\n")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 2. 整体指标 ----------
+total_retail = df["零售金额"].sum()
+total_deal = df["成交金额"].sum()
+n_orders = df["订单编号"].nunique()
+print("【整体指标】")
+print(f"零售金额合计 = {total_retail:,.0f}")
+print(f"成交金额合计 = {total_deal:,.0f}")
+print(f"整体折扣率   = {total_deal/total_retail*100:.2f}%")
+print(f"订单数       = {n_orders:,}，客单价(成交) = {total_deal/n_orders:,.1f}")
+print(f"总销量(数量) = {df['数量'].sum():,}\n")
+
+# ---------- 3. 月度趋势 ----------
+monthly = df.groupby("月份").agg(成交金额=("成交金额", "sum"),
+                                订单数=("订单编号", "nunique"),
+                                折扣率=("折扣率", "mean")).reset_index()
+monthly = monthly.sort_values("月份")
+fig, ax = plt.subplots(figsize=(9, 4.5))
+ax.bar(monthly["月份"], monthly["成交金额"], color="#4C78A8", label="成交金额")
+ax2 = ax.twinx()
+ax2.plot(monthly["月份"], monthly["折扣率"] * 100, color="#E45756", marker="o", label="折扣率(%)")
+ax.set_title("月度成交金额与折扣率趋势"); ax.set_ylabel("成交金额"); ax2.set_ylabel("折扣率(%)")
+plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "215a_月度趋势.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 店铺对比 ----------
+shop = df.groupby("店铺id").agg(成交金额=("成交金额", "sum"),
+                               订单数=("订单编号", "nunique"),
+                               折扣率=("折扣率", "mean")).reset_index() \
+          .sort_values("成交金额", ascending=False)
+print("【各店铺成交对比（TOP15）】")
+print(shop.head(15).to_string(index=False))
+fig, ax = plt.subplots(figsize=(9, 4.5))
+ax.bar(shop["店铺id"].astype(str).head(15), shop["成交金额"].head(15), color="#54A24B")
+ax.set_title("各店铺成交金额 TOP15"); ax.set_ylabel("成交金额"); ax.set_xlabel("店铺id")
+plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "215b_店铺对比.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 5. 会员 vs 非会员 ----------
+mem = df.groupby("是否会员").agg(成交金额=("成交金额", "sum"),
+                                 订单数=("订单编号", "nunique"),
+                                 客单价=("成交金额", "mean"),
+                                 折扣率=("折扣率", "mean")).reset_index()
+mem["客单价"] = mem["成交金额"] / mem["订单数"]
+print("\n【会员 vs 非会员】")
+print(mem.to_string(index=False))
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+axes[0].bar(mem["是否会员"], mem["成交金额"], color=["#4C78A8", "#F58518"])
+axes[0].set_title("会员/非会员 成交金额"); axes[0].set_ylabel("成交金额")
+axes[1].bar(mem["是否会员"], mem["折扣率"] * 100, color=["#4C78A8", "#F58518"])
+axes[1].set_title("会员/非会员 折扣率(%)"); axes[1].set_ylabel("折扣率(%)")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "215c_会员对比.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 6. 客单价与单笔金额分布 ----------
+print(f"\n【单笔成交金额】均值 = {df['成交金额'].mean():.1f}，中位数 = {df['成交金额'].median():.1f}")
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.hist(df["成交金额"].clip(upper=df["成交金额"].quantile(0.99)), bins=50, color="#9D9D9D")
+ax.set_title("单笔成交金额分布（截尾至 99 分位）"); ax.set_xlabel("成交金额"); ax.set_ylabel("笔数")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "215d_金额分布.png"), dpi=150, bbox_inches="tight")
+plt.show()

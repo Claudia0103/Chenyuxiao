@@ -1,0 +1,94 @@
+# ===== 第2章 2.2 RFM 模型复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/1-2RFM模型-参考.xlsx)
+# 迁移：Python (pandas + matplotlib)
+# 【项目内涵理解】
+#   RFM 用三个维度给用户分层：
+#     R(Recency) 最近一次消费距分析时点(2019-08-03)的天数 —— 越小越"近" → 记"高"
+#     F(Frequency) 消费频次 —— distinct 订单数（教材"消费次数=distinctcount(流水号)"）
+#     M(Monetary) 消费金额 —— 期内消费金额合计
+#   每个维度以"全量用户均值"为阈值：≥均值记"高"，否则"低"；
+#   三维高低组合成 8 类用户（重要价值/发展/保持/挽留 × 一般，见业务背景页映射表）。
+#   另外教材"参考答案"页右表还有"帕累托/ABC 分析"：按用户类别汇总消费额、算累计占比、
+#   标 80% 参考线（重要价值用户一类即占 62.4% 营收，符合二八定律）——本脚本一并复现。
+# 已与教材参考答案逐用户核对：7178 人、R/F/M 程度、最终 8 类、帕累托累计%，全部一致。
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+
+# ① 数据路径：改成你本机文件实际位置（默认用 Desktop，百度网盘版留作注释）
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-2RFM模型-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-2RFM模型-参考.xlsx"
+ASOF = pd.Timestamp("2019-08-03")     # 分析时点（教材固定值）
+CHART_DIR = "charts"
+
+# ② 读原始交易明细
+raw = pd.read_excel(XLSX, sheet_name="原始数据", header=0)
+raw.columns = raw.columns.str.strip()
+raw["销售日期"] = pd.to_datetime(raw["销售日期"])
+
+# ③ 按用户聚合 R / F / M
+g = raw.groupby("用户编号").agg(
+    R_days=("销售日期", lambda s: (ASOF - s.max()).days),  # 距最近一次消费天数
+    F=("流水号", "nunique"),                               # 订单数(distinct)
+    M=("销售金额", "sum"),                                 # 消费金额合计
+)
+
+# ④ 阈值 = 各维度均值（教材口径）
+R_thr, F_thr, M_thr = g["R_days"].mean(), g["F"].mean(), g["M"].mean()
+print(f"R均值={R_thr:.6f}  F均值={F_thr:.6f}  M均值={M_thr:.6f}  (参考 82.737531/3.724575/743.408484)")
+
+# ⑤ 高低判定（R 越小越近→"高"；F、M 越大越优→"高"）
+g["R程度"] = ["高" if x <  R_thr else "低" for x in g["R_days"]]
+g["F程度"] = ["高" if x >= F_thr else "低" for x in g["F"]]
+g["M程度"] = ["高" if x >= M_thr else "低" for x in g["M"]]
+
+# ⑥ 8 类用户（业务背景页明确映射）
+def classify(r):
+    h = (r["R程度"], r["F程度"], r["M程度"])
+    table = {
+        ("高","高","高"): "重要价值用户", ("高","低","高"): "重要发展用户",
+        ("低","高","高"): "重要保持用户", ("低","低","高"): "重要挽留用户",
+        ("高","高","低"): "一般价值用户", ("高","低","低"): "一般发展用户",
+        ("低","高","低"): "一般保持用户", ("低","低","低"): "一般挽留用户",
+    }
+    return table[h]
+g["用户类别"] = g.apply(classify, axis=1)
+
+print("\n【各类用户数】")
+print(g["用户类别"].value_counts().to_string())
+
+# ⑦ 帕累托 / ABC 分析：按用户类别汇总消费额、累计占比（教材右表）
+cat_m = g.groupby("用户类别")["M"].sum().sort_values(ascending=False)
+cum = cat_m.cumsum() / cat_m.sum()
+print("\n【帕累托/ABC 分析（按类别消费额累计占比）】")
+for k in cat_m.index:
+    print(f"  {k}: 消费额={cat_m[k]:,.0f}  累计={cum[k]*100:6.2f}%")
+print(f"  （重要价值用户单类即占 {cum.iloc[0]*100:.2f}% 营收，符合二八定律）")
+
+# ⑧ 可视化
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# 8a 八类用户柱状图
+vc = g["用户类别"].value_counts()
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.bar(vc.index, vc.values, color="#4C78A8")
+ax.set_title("RFM 八类用户分布"); ax.tick_params(axis="x", rotation=30)
+for i, v in enumerate(vc.values):
+    ax.text(i, v + 5, str(v), ha="center")
+fig.savefig(f"{CHART_DIR}/22_RFM用户分类.png", dpi=150, bbox_inches="tight"); plt.close(fig)
+
+# 8b 帕累托图（柱 + 累计折线 + 80% 参考线）
+fig, ax = plt.subplots(figsize=(9, 5))
+x = list(range(len(cat_m)))
+ax.bar(x, cat_m.values, color="#54A24B")
+ax.set_xticks(x); ax.set_xticklabels(cat_m.index, rotation=30)
+ax.set_ylabel("消费额")
+ax2 = ax.twinx()
+ax2.plot(x, cum.values * 100, "o-", color="#E45756")
+ax2.axhline(80, color="grey", ls="--", label="80% 参考线")
+ax2.set_ylabel("累计占比 (%)"); ax2.set_ylim(0, 105)
+ax.set_title("RFM 帕累托 / ABC 分析")
+fig.savefig(f"{CHART_DIR}/22b_RFM帕累托.png", dpi=150, bbox_inches="tight"); plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/22_RFM用户分类.png, {CHART_DIR}/22b_RFM帕累托.png")

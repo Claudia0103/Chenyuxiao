@@ -1,0 +1,119 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.13 统计制图原理 · sale 小案例复现
+========================================================
+原教材实现：CSV（3、统计制图原理/sale.csv）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+统计制图原理这一节讲“怎么把数据画成对的图”。这份 sale.csv 是一个极简示例：
+  字段：year(年)、market(地区：东/南/西/北)、sale(销售额)、profit(利润)
+它本身就是一张“年份×地区”的二维数据，适合演示四类基础图：
+  1) 趋势图：各地区的销售额随年份的变化（折线）
+  2) 对比图：同一年各地区销售额对比（柱状）
+  3) 构成图：各地区销售额/利润在总量中的占比（堆叠柱 + 百分比）
+  4) 关系图：销售额与利润的相关性（散点）
+复现就是把这些“对的图”用 matplotlib 重新画出来，并输出关键数值。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CSV = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/3、统计制图原理/sale.csv"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取 ----------
+df = pd.read_csv(CSV, encoding="gb18030")
+print("【原始数据】")
+print(df.to_string(index=False))
+
+pivot_sale = df.pivot_table(values="sale", index="year", columns="market", aggfunc="sum")
+pivot_profit = df.pivot_table(values="profit", index="year", columns="market", aggfunc="sum")
+markets = list(pivot_sale.columns)
+print("\n【各地区销售额透视】")
+print(pivot_sale.to_string())
+print("\n【各地区利润透视】")
+print(pivot_profit.to_string())
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+colors = ["#4C78A8", "#F58518", "#54A24B", "#E45756"]
+
+# ---------- 2. 趋势图（折线） ----------
+fig, ax = plt.subplots(figsize=(7, 4.5))
+for i, m in enumerate(markets):
+    ax.plot(pivot_sale.index, pivot_sale[m], marker="o", color=colors[i % 4], label=m)
+ax.set_title("各地区销售额趋势（2010–2012）")
+ax.set_xlabel("年份"); ax.set_ylabel("销售额")
+ax.legend(title="地区"); ax.grid(alpha=0.3)
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "213a_销售额趋势.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 3. 对比图（分组柱状） ----------
+fig, ax = plt.subplots(figsize=(7, 4.5))
+x = range(len(pivot_sale.index))
+w = 0.2
+for i, m in enumerate(markets):
+    ax.bar([xi + (i - 1.5) * w for xi in x], pivot_sale[m], width=w,
+           color=colors[i % 4], label=m)
+ax.set_xticks(list(x)); ax.set_xticklabels(pivot_sale.index)
+ax.set_title("各地区销售额对比（按年分组）")
+ax.set_xlabel("年份"); ax.set_ylabel("销售额"); ax.legend(title="地区")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "213b_销售额对比.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 构成图（堆叠柱 + 百分比） ----------
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+# 4.1 销售额堆叠
+bottom = [0] * len(pivot_sale.index)
+for i, m in enumerate(markets):
+    axes[0].bar(pivot_sale.index, pivot_sale[m], bottom=bottom,
+               color=colors[i % 4], label=m)
+    bottom = [b + v for b, v in zip(bottom, pivot_sale[m])]
+axes[0].set_title("销售额构成（堆叠）"); axes[0].set_ylabel("销售额")
+axes[0].legend(title="地区")
+# 4.2 利润占比（百分比堆叠）
+profit_pct = pivot_profit.div(pivot_profit.sum(axis=1), axis=0) * 100
+bottom = [0] * len(profit_pct.index)
+for i, m in enumerate(markets):
+    axes[1].bar(profit_pct.index, profit_pct[m], bottom=bottom,
+               color=colors[i % 4], label=m)
+    bottom = [b + v for b, v in zip(bottom, profit_pct[m])]
+axes[1].set_title("利润地区构成（百分比堆叠）"); axes[1].set_ylabel("占比(%)")
+axes[1].legend(title="地区")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "213c_构成.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 5. 关系图（散点：销售额 vs 利润） ----------
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.scatter(df["sale"], df["profit"], c="#4C78A8", s=60)
+# 标注地区
+for _, r in df.iterrows():
+    ax.annotate(f"{r['market']}{r['year']}", (r["sale"], r["profit"]),
+                fontsize=8, xytext=(4, 4), textcoords="offset points")
+ax.set_title("销售额与利润的关系（散点）")
+ax.set_xlabel("销售额"); ax.set_ylabel("利润")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "213d_关系.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 6. 关键数值输出 ----------
+print("\n【关键数值】")
+print(f"总销售额 = {df['sale'].sum():.0f}，总利润 = {df['profit'].sum():.0f}")
+print(f"三年平均利润率 = {df['profit'].sum()/df['sale'].sum()*100:.2f}%")
+print("各地区三年销售额合计：")
+print(df.groupby("market")["sale"].sum().to_string())

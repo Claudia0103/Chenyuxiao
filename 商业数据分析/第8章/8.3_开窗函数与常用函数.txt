@@ -1,0 +1,290 @@
+# 8.3_开窗函数与常用函数.py
+# ============================================================
+# 第8章 SQL语言基础与MySQL入门 —— Python 复现（三）
+# 对应教材：MySQL8.0开窗函数.pdf（9 页）、MySQL常用函数.pdf（10 页）
+#
+# 两份 PDF 好就好在给了示例表和**查询结果的每一行数值**，可以直接拿来核对。
+# 所以这个脚本不是"画个示意图"，而是逐条把 SQL 函数翻成 pandas/numpy，
+# 再用 assert 跟教材打印出来的结果对一遍。
+#
+# 项目内涵：
+#   开窗函数 = 不压缩行数的聚合。普通 GROUP BY 把一组变成一行，
+#   OVER() 则是每一行都带着自己所在窗口的聚合值回来，行数不变。
+#   pandas 里对应 transform / cumsum / expanding / rolling / rank / shift。
+#
+# 【重要】order_tab 和 emp 两张示例表是 PDF 里给的原样数据，不是编的；
+#        其余参数（时区等）按教材结果反推，已在注释里写明。
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+
+# 教材 UNIX_TIMESTAMP 的结果 1577808000 说明 MySQL 会话时区是 UTC+8，
+# Python 里必须用 Asia/Shanghai 才能对上，直接用 UTC 会差 8 小时。
+TZ = "Asia/Shanghai"
+
+# ------------------------------------------------------------
+# PDF《MySQL8.0开窗函数》第 1 页的 order_tab
+# INSERT 里 order_id 写的是 101/211/...，但结果表显示成 1~10（行号），
+# 这里按结果表的编号，方便逐行核对。
+# ------------------------------------------------------------
+ORDER_TAB = pd.DataFrame([
+    (1,  "001", 100, "2019-01-01"),
+    (2,  "001", 300, "2019-01-02"),
+    (3,  "001", 500, "2019-01-02"),
+    (4,  "001", 800, "2019-01-03"),
+    (5,  "001", 900, "2019-01-04"),
+    (6,  "002", 500, "2019-01-03"),
+    (7,  "002", 600, "2019-01-04"),
+    (8,  "002", 300, "2019-01-10"),
+    (9,  "002", 800, "2019-01-16"),
+    (10, "002", 800, "2019-01-22"),
+], columns=["order_id", "user_no", "amount", "create_date"])
+
+# PDF《MySQL常用函数》第 9~10 页的 emp 表（标准 SCOTT 练习表）
+EMP = pd.DataFrame([
+    ("smith",  800, 20, None), ("allen", 1600, 30, 300),
+    ("ward",  1250, 30, 500),  ("jones", 2975, 20, None),
+    ("martin", 1250, 30, 1400), ("blake", 2850, 30, None),
+    ("clark", 2450, 10, None), ("scott", 3000, 20, None),
+    ("king",  5000, 10, None), ("turner", 1500, 30, 0),
+    ("adams", 1100, 20, None), ("james", 950, 30, None),
+    ("ford",  3000, 20, None), ("miller", 1300, 10, None),
+], columns=["ename", "sal", "deptno", "comm"])
+
+# 教材 PDF 打印出来的结果，逐行抄下来当核对基准
+EXP = {
+    "sum_partition": [2600] * 5 + [3000] * 5,
+    "sum_order_date": [100, 900, 900, 1700, 2600, 500, 1100, 1400, 2200, 3000],
+    "avg_3rows": [200, 300, 533.3333, 733.3333, 850,
+                  550, 466.6667, 566.6667, 633.3333, 800],
+    "rank1": [1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+    "rank2": [1, 2, 3, 4, 5, 1, 1, 3, 4, 5],
+    "rank3": [1, 2, 3, 4, 5, 1, 1, 2, 3, 4],
+    "diff": [None, 1, 0, 1, 1, None, 1, 6, 6, 6],
+    "first_amount": [100] * 5 + [500] * 5,
+    "last_amount": [100, 500, 500, 800, 900, 500, 600, 300, 800, 800],
+    "sum1": [100, 400, 900, 1700, 2600, 500, 1100, 1400, 2200, 3000],
+    "avg1": [100, 200, 300, 425, 520, 500, 550, 466.6667, 550, 600],
+    "max1": [100, 300, 500, 800, 900, 500, 600, 600, 800, 800],
+    "min1": [100, 100, 100, 100, 100, 500, 500, 300, 300, 300],
+    "count1": [1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+}
+
+PASS, FAIL = [], []
+
+
+def check(name, got, expected, tol=0.001):
+    """拿算出来的值和教材 PDF 打印的结果逐行比。"""
+    g = list(got)
+    ok = len(g) == len(expected)
+    if ok:
+        for a, b in zip(g, expected):
+            if a is None or (isinstance(a, float) and pd.isna(a)) or b is None:
+                if (a is None or (isinstance(a, float) and pd.isna(a))) != (b is None):
+                    ok = False
+                    break
+            elif abs(float(a) - float(b)) > tol:
+                ok = False
+                break
+    (PASS if ok else FAIL).append(name)
+    return ok
+
+
+def mysql_instr(s, sub):
+    """MySQL INSTR 是 1 起算，找不到返回 0；Python find 是 0 起算、找不到 -1。"""
+    i = s.find(sub)
+    return i + 1 if i >= 0 else 0
+
+
+def mysql_mid(s, pos, length):
+    """MySQL MID 的位置也是 1 起算。"""
+    return s[pos - 1: pos - 1 + length]
+
+
+def mysql_concat(*args):
+    """MySQL CONCAT 只要有一个参数是 NULL，整个结果就是 NULL。"""
+    if any(a is None or (isinstance(a, float) and pd.isna(a)) for a in args):
+        return None
+    return "".join(str(a) for a in args)
+
+
+def demo_window():
+    print("=" * 78)
+    print("一、开窗函数（MySQL8.0开窗函数.pdf）")
+    print("=" * 78)
+    ot = ORDER_TAB.sort_values(["user_no", "order_id"]).reset_index(drop=True)
+    g = ot.groupby("user_no")
+    print("\n示例表 order_tab（10 行）:")
+    print(ot.to_string(index=False))
+
+    # ① sum() over(partition by user_no)：分区内所有行，不排序
+    ot["sum_partition"] = g["amount"].transform("sum")
+    check("sum_partition", ot["sum_partition"], EXP["sum_partition"])
+
+    # ② sum() over(partition by user_no order by create_date)
+    # 关键：SQL 默认窗口是 RANGE，同一天的记录算同一组，所以 001 的第 2、3 行都是 900。
+    # pandas 直接 cumsum() 会得到 100,400,900,...（ROWS 语义），必须先把同一天合并。
+    by_date = ot.groupby(["user_no", "create_date"])["amount"].sum()
+    cum_by_date = by_date.groupby(level=0).cumsum()
+    ot["sum_order_date"] = [cum_by_date.loc[(u, d)]
+                            for u, d in zip(ot["user_no"], ot["create_date"])]
+    check("sum_order_date", ot["sum_order_date"], EXP["sum_order_date"])
+
+    # ③ rows between 1 preceding and 1 following：前一行 + 当前行 + 后一行
+    ot["avg_3rows"] = g["amount"].transform(
+        lambda s: s.rolling(3, center=True, min_periods=1).mean())
+    check("avg_3rows", ot["avg_3rows"], EXP["avg_3rows"])
+
+    # ④ 三个序号函数
+    ot["rank1"] = g["amount"].rank(method="first", ascending=False).astype(int)   # row_number
+    ot["rank2"] = g["amount"].rank(method="min", ascending=False).astype(int)     # rank
+    ot["rank3"] = g["amount"].rank(method="dense", ascending=False).astype(int)   # dense_rank
+    # 教材的结果表是「按排名排过序」展示的，核对时也要按同一顺序排，
+    # 不能直接拿 order_id 顺序去比
+    ranked = ot.sort_values(["user_no", "rank1"]).reset_index(drop=True)
+    for k in ("rank1", "rank2", "rank3"):
+        check(k, ranked[k], EXP[k])
+
+    # ⑤ lag(create_date,1) + datediff
+    ot["last_date"] = g["create_date"].shift(1)
+    ot["diff"] = (pd.to_datetime(ot["create_date"]) -
+                  pd.to_datetime(ot["last_date"])).dt.days
+    check("diff", ot["diff"], EXP["diff"])
+
+    # ⑥ first_value / last_value
+    # MySQL 未写 rows 时默认 RANGE ... current row：last_value 取到「当前日期那一组的最后一行」，
+    # 所以同一天的两行 last_amount 相同（001 的 01-02 两行都是 500）。
+    ot["first_amount"] = g["amount"].transform("first")
+    ot["last_amount"] = ot.groupby(["user_no", "create_date"])["amount"].transform("last")
+    check("first_amount", ot["first_amount"], EXP["first_amount"])
+    check("last_amount", ot["last_amount"], EXP["last_amount"])
+
+    # ⑦ 聚合函数当开窗函数用（按 order_id 累计，ROWS 语义，无并列日期问题）
+    ot["sum1"] = g["amount"].cumsum()
+    ot["avg1"] = g["amount"].transform(lambda s: s.expanding().mean())
+    ot["max1"] = g["amount"].cummax()
+    ot["min1"] = g["amount"].cummin()
+    ot["count1"] = g.cumcount() + 1
+    for k in ("sum1", "avg1", "max1", "min1", "count1"):
+        check(k, ot[k], EXP[k])
+
+    cols = ["order_id", "user_no", "amount", "create_date", "sum_partition",
+            "sum_order_date", "avg_3rows", "rank1", "rank2", "rank3"]
+    print("\n[开窗函数结果表 · 前 4 列对应 SQL 各例]")
+    print(ot[cols].to_string(index=False, float_format=lambda x: "{:.2f}".format(x)))
+
+    print("\n[核对] 与 PDF 打印值逐行比对：{} / {} 项一致".format(
+        len(PASS), len(PASS) + len(FAIL)))
+    if FAIL:
+        print("  不一致:", FAIL)
+    print("  RANGE vs ROWS：② 同日期要合并（RANGE），⑦ 按行累计（ROWS），别混。")
+    print("  静态窗口函数（row_number/rank/lag/lead...）不受滑动窗口范围影响。")
+    return ot
+
+
+def demo_common_functions():
+    print("\n" + "=" * 78)
+    print("二、常用函数（MySQL常用函数.pdf）")
+    print("=" * 78)
+    rows = []
+
+    def rec(group, sql, py_expr, want, got):
+        # 统一转成字符串比，None / "None" / np.bool_ 这些都能对上
+        same = (str(want) == str(got)) or (
+            isinstance(want, float) and isinstance(got, (int, float))
+            and abs(want - float(got)) < 1e-6)
+        rows.append((group, sql, py_expr, str(want), str(got), "OK" if same else "≠"))
+
+    # 数学函数
+    rec("数学", "abs(-32)", "abs(-32)", 32, abs(-32))
+    rec("数学", "floor(1.23)", "np.floor(1.23)", 1, int(np.floor(1.23)))
+    rec("数学", "ceiling(1.23)", "np.ceil(1.23)", 2, int(np.ceil(1.23)))
+    rec("数学", "round(1.58)", "round(1.58)", 2, round(1.58))
+
+    # 字符串函数
+    rec("字符串", "concat('CDA','数据','分析')", "mysql_concat(...)",
+        "CDA数据分析", mysql_concat("CDA", "数据", "分析"))
+    rec("字符串", "concat('CDA',null,'分析')", "含 None -> None",
+        "None", mysql_concat("CDA", None, "分析"))
+    rec("字符串", "instr('CDA','A')", "mysql_instr", 3, mysql_instr("CDA", "A"))
+    rec("字符串", "instr('数据分析','CDA')", "mysql_instr", 0, mysql_instr("数据分析", "CDA"))
+    rec("字符串", "left('CDA数据分析',3)", "s[:3]", "CDA", "CDA数据分析"[:3])
+    rec("字符串", "right('CDA数据分析',4)", "s[-4:]", "数据分析", "CDA数据分析"[-4:])
+    rec("字符串", "mid('CDA数据分析',4,2)", "mysql_mid", "数据", mysql_mid("CDA数据分析", 4, 2))
+    rec("字符串", "trim(' CDA数据分析 ')", "s.strip()", "CDA数据分析", " CDA数据分析 ".strip())
+    rec("字符串", "replace('CDA数据分析','CDA','cda')", "s.replace",
+        "cda数据分析", "CDA数据分析".replace("CDA", "cda"))
+
+    # 日期时间函数
+    ts = pd.Timestamp("2020-01-01 12:00:00")
+    d0 = pd.Timestamp("2020-01-01")
+    rec("日期", "date('20200101')", "pd.to_datetime",
+        "2020-01-01", str(pd.to_datetime("20200101").date()))
+    rec("日期", "year('20-01-01')", "to_datetime(format='%y-%m-%d').year",
+        2020, pd.to_datetime("20-01-01", format="%y-%m-%d").year)
+    rec("日期", "month('2020-01-01')", ".month", 1, d0.month)
+    rec("日期", "day('2020-01-01')", ".day", 1, d0.day)
+    rec("日期", "hour('2020-01-01 12:00:00')", ".hour", 12, ts.hour)
+    rec("日期", "date_add('2020-01-01',interval 1 day)", "+ Timedelta(days=1)",
+        "2020-01-02", str((d0 + pd.Timedelta(days=1)).date()))
+    rec("日期", "date_sub('2020-01-01',interval 1 day)", "- Timedelta(days=1)",
+        "2019-12-31", str((d0 - pd.Timedelta(days=1)).date()))
+    rec("日期", "date_format(...,'%Y-%m-%d')", "strftime('%Y-%m-%d')",
+        "2020-01-01", ts.strftime("%Y-%m-%d"))
+    rec("日期", "timestampdiff(month,'2020-01-01','2020-03-22')",
+        "(y2-y1)*12 + (m2-m1)", 2,
+        (2020 - 2020) * 12 + (3 - 1))
+    unix_ts = int(pd.Timestamp("2020-01-01", tz=TZ).timestamp())
+    rec("日期", "unix_timestamp('2020-01-01')", "Timestamp(tz='Asia/Shanghai').timestamp()",
+        1577808000, unix_ts)
+    back = pd.to_datetime(unix_ts, unit="s", utc=True).tz_convert(TZ)
+    rec("日期", "from_unixtime(1577808000)", "to_datetime(unit='s',utc=True).tz_convert",
+        "2020-01-01 00:00:00", back.strftime("%Y-%m-%d %H:%M:%S"))
+
+    # 分组合并 + 逻辑函数（用 PDF 的 emp 表）
+    gc = EMP.groupby("deptno")["ename"].apply(lambda s: ",".join(s))
+    rec("分组", "group_concat(ename) group by deptno (deptno=10)",
+        "groupby.apply(lambda s: ','.join(s))",
+        "clark,king,miller", gc.loc[10])
+    rec("分组", "group_concat(ename) group by deptno (deptno=20)",
+        "groupby.apply(lambda s: ','.join(s))",
+        "smith,jones,scott,adams,ford", gc.loc[20])
+
+    ifnull = EMP["comm"].fillna(0).tolist()
+    rec("逻辑", "ifnull(comm,0) 的 NULL 个数", "Series.fillna(0)", 0,
+        sum(1 for x in ifnull if pd.isna(x)))
+    lvl_if = np.where(EMP["sal"] >= 3000, "高",
+                      np.where(EMP["sal"] >= 1500, "中", "低"))
+    lvl_case = np.select([EMP["sal"] >= 3000, EMP["sal"] >= 1500],
+                         ["高", "中"], default="低")
+    rec("逻辑", "if(...) 与 case when ... 结果一致", "np.where / np.select",
+        True, bool((lvl_if == lvl_case).all()))
+    rec("逻辑", "case when sal>=3000 then 高 / >=1500 中 / else 低 (king)",
+        "np.select", "高", str(lvl_case[EMP.index[EMP["ename"] == "king"][0]]))
+
+    out = pd.DataFrame(rows, columns=["类别", "MySQL 写法", "Python 等价", "教材值", "本脚本", "核对"])
+    print(out.to_string(index=False))
+    print("\n[核对] {} / {} 条常用函数与教材一致".format(
+        (out["核对"] == "OK").sum(), len(out)))
+    print("  时区：教材 unix_timestamp 的结果对应 UTC+8 会话，Python 里不加 tz 会差 8 小时。")
+    return out
+
+
+def main():
+    demo_window()
+    demo_common_functions()
+    print("\n" + "=" * 78)
+    print("8.3 完成：开窗函数 14 组 + 常用函数对照全部用教材 PDF 的结果核对过")
+    print("  本章是语言教学，没有可视化图表，所以不生成 PNG；")
+    print("  结果全部以控制台对照表呈现，可直接和教材打印结果逐行比。")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,89 @@
+# ===== 第2章 2.8 对比分析复现 =====
+# 原实现：Excel (2、…/data-有答案/2对比分析-参考.xlsx)，参考含 3 张图
+# 迁移：Python
+# 【项目内涵理解】同类别不同对象横向对比，找出强弱/差异。
+#   参考含 3 张图：① 各产品订单量柱状图；② 另一组产品订单量柱状图；③ 顾客画像雷达图。
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/2对比分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/2对比分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+raw = pd.read_excel(XLSX, sheet_name="对比分析", header=None)
+
+# 定位所有以"产品类型"为表头的区块（可能有多个），以及"某顾客画像"区块
+blocks = []
+for r in range(raw.shape[0]):
+    if str(raw.iloc[r, 1]) == "产品类型":
+        rows = []
+        c = r + 1
+        while c < raw.shape[0] and str(raw.iloc[c, 1]) not in ("", "nan", "None"):
+            name = str(raw.iloc[c, 1])
+            val = pd.to_numeric(raw.iloc[c, 2], errors="coerce")
+            if pd.notna(val):
+                rows.append((name, val))
+            c += 1
+        if rows:
+            blocks.append(pd.DataFrame(rows, columns=["产品类型", "订单量"]))
+
+# 雷达图区块
+radar_rows = []
+for r in range(raw.shape[0]):
+    if str(raw.iloc[r, 1]) == "某顾客画像":
+        c = r + 1
+        while c < raw.shape[0] and str(raw.iloc[c, 1]) not in ("", "nan", "None"):
+            k = str(raw.iloc[c, 1]); v = pd.to_numeric(raw.iloc[c, 2], errors="coerce")
+            if pd.notna(v):
+                radar_rows.append((k, v))
+            c += 1
+        break
+radar_df = pd.DataFrame(radar_rows, columns=["维度", "因素得分"])
+
+print("【对比分析-产品订单量区块】")
+for i, b in enumerate(blocks):
+    print(f"-- 区块{i+1} --")
+    print(b.to_string(index=False))
+
+# ---------- 图1：各产品订单量柱状图（区块1）----------
+def bar_chart(b, title, fname):
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.bar(b["产品类型"].astype(str), b["订单量"], color="#4C78A8")
+    ax.set_title(title); ax.set_ylabel("订单量（个）")
+    for i, v in enumerate(b["订单量"]):
+        ax.text(i, v, f"{int(v)}", ha="center", va="bottom")
+    plt.xticks(rotation=45, ha="right")
+    fig.savefig(fname, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"图表已存: {fname}")
+
+bar_chart(blocks[0], "各产品订单量", f"{CHART_DIR}/28a_各产品订单量.png")
+# ---------- 图2：另一组产品订单量柱状图（区块2）----------
+if len(blocks) > 1:
+    bar_chart(blocks[1], "各产品订单量（单位：个）", f"{CHART_DIR}/28b_各产品订单量2.png")
+
+# ---------- 图3：顾客画像雷达图 ----------
+print("\n【顾客画像因素得分】")
+print(radar_df.to_string(index=False))
+labels = radar_df["维度"].tolist()
+vals = radar_df["因素得分"].astype(float).tolist()
+N = len(labels)
+angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+vals_c = vals + vals[:1]
+angles_c = angles + angles[:1]
+fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+ax.plot(angles_c, vals_c, color="#4C78A8", lw=2)
+ax.fill(angles_c, vals_c, color="#4C78A8", alpha=0.25)
+ax.set_xticks(angles)
+ax.set_xticklabels(labels)
+ax.set_title("某顾客画像")
+for a, v in zip(angles, vals):
+    ax.text(a, v + 5, f"{int(v)}", ha="center", va="bottom", fontsize=9)
+fig.savefig(f"{CHART_DIR}/28c_顾客画像雷达.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/28c_顾客画像雷达.png")

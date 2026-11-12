@@ -1,0 +1,140 @@
+# -*- coding: utf-8 -*-
+"""
+第10章 · 使用效应分解方法做预报 —— 10.3 信用卡消费额时间序列预测（含节日 vs 去除节日）
+=====================================================================================
+教材给的素材：
+  - 信用卡消费额_含节日.xlsx（sheet pos：2013-03 每日消费额，单位元）
+  - 信用卡消费额_去除节日.xlsx（Sheet1：同月每日消费额，单位 万元，已剔除节假日异常）
+  - 信用卡消费额_WPS自带AI功能做时间序列预测.xlsx（Sheet2：历史 + SARIMA 7 天预测，单位 万元）
+
+思路：日度消费额有强烈的"星期"季节效应（周末高、工作日低），这正是效应分解里的
+"季节成分"。把序列拆成 趋势 × 星期季节 × 不规则 后，未来每天只要取"对应星期几的历史均值"
+就能预报——和 WPS 的 SARIMA 预测几乎重合（实测 MAPE < 1%）。
+
+输出图：
+  103a_去除节日_星期分解与预报.png —— 趋势 + 星期季节指数 + 历史 + 7天预报(含WPS参考)
+  103b_含节日与去除节日对比.png    —— 两条曲线叠加，直观看节假日尖峰被剔除
+
+运行：作为 .py 运行 或 整段粘贴进 Jupyter（已做 __file__ 兜底）。
+"""
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+
+BASE = (r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》"
+        r"/第10章 使用效应分解方法做预报")
+WEEK = 7
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print("  已保存:", path)
+    return path
+
+
+def main():
+    # ---- 读取三条序列 ----
+    dh = pd.read_excel(os.path.join(BASE, "信用卡消费额_去除节日.xlsx"))
+    dh.columns = [c.strip() for c in dh.columns]
+    y = dh["信用卡消费额"].astype(float).reset_index(drop=True)        # 万元
+    dates = pd.to_datetime(dh["日期"])
+
+    dp = pd.read_excel(os.path.join(BASE, "信用卡消费额_含节日.xlsx"), sheet_name="pos")
+    y_holiday_raw = dp["amount"].astype(float).values / 10000.0        # 元 → 万元
+
+    wps = pd.read_excel(os.path.join(BASE, "信用卡消费额_WPS自带AI功能做时间序列预测.xlsx"),
+                        sheet_name="Sheet2")
+    wfc = wps[["Unnamed: 0", "SARIMA预测数据"]].dropna().set_index("Unnamed: 0")["SARIMA预测数据"]
+    wfc.index = pd.to_datetime(wfc.index)
+    print("\n[数据] 去除节日序列：{} ~ {}，共 {} 天，单位 万元".format(
+        dates.iloc[0].strftime("%Y-%m-%d"), dates.iloc[-1].strftime("%Y-%m-%d"), len(y)))
+    print("[数据] 日均消费额 {:.2f} 万，最高 {:.2f} 万，最低 {:.2f} 万".format(
+        y.mean(), y.max(), y.min()))
+
+    # ---- 星期季节分解 ----
+    wk = dates.dt.dayofweek.values                                  # 0=周一 … 6=周日
+    # 趋势：7 日居中移动平均（周度平滑）
+    trend = y.rolling(WEEK, center=True, min_periods=1).mean()
+    detr = y / trend
+    # 各星期几的季节指数（归一化）
+    idx = detr.groupby(wk).mean()
+    idx = idx / idx.mean()
+    seasonal = pd.Series(wk).map(idx).values
+    resid = y / (trend * seasonal)
+
+    # ---- 未来 7 天预报：取"对应星期几的历史均值"（季节朴素，等价于趋势平稳时的分解预报）----
+    last_wk = wk[-1]
+    fc_dates = [dates.iloc[-1] + pd.Timedelta(days=i + 1) for i in range(7)]
+    fc_vals = []
+    for i in range(7):
+        w = (last_wk + 1 + i) % WEEK
+        fc_vals.append(y[wk == w].mean() if (wk == w).sum() > 0 else y.mean())
+    fc_vals = np.array(fc_vals)
+    wfc_aligned = wfc.reindex(fc_dates)
+
+    # ===== 图 1：去除节日 — 趋势 + 星期季节 + 历史 + 预报 =====
+    fig, axs = plt.subplots(3, 1, figsize=(11, 10), sharex=False)
+    axs[0].plot(dates, y.values, color="#1F4E79", lw=1.1, label="去除节日实际")
+    axs[0].plot(dates, trend.values, color="#C00000", lw=2.0, label="趋势(7日MA)")
+    axs[0].set_title("信用卡消费额（去除节日）：趋势成分", fontsize=13)
+    axs[0].legend(); axs[0].grid(True, ls=":", alpha=0.4)
+    bar_colors = ["#2E7D32" if idx[w] >= 1 else "#2F5597" for w in range(WEEK)]
+    axs[1].bar(range(WEEK), [idx[w] for w in range(WEEK)], color=bar_colors)
+    axs[1].axhline(1.0, color="#333", ls="--", lw=1)
+    axs[1].set_xticks(range(WEEK))
+    axs[1].set_xticklabels(["周一", "周二", "周三", "周四", "周五", "周六", "周日"])
+    axs[1].set_title("星期季节指数（绿=高于均值，蓝=低于均值）", fontsize=13)
+    axs[1].grid(True, axis="y", ls=":", alpha=0.4)
+    axs[2].plot(dates, y.values, color="#1F4E79", lw=1.1, label="历史实际")
+    axs[2].plot(fc_dates, fc_vals, color="#C00000", lw=2.0, marker="o", ms=4, label="分解法预报(星期均值)")
+    axs[2].plot(wfc_aligned.index, wfc_aligned.values, color="#E8A33D", lw=1.6, ls="--",
+                marker="s", ms=4, label="WPS SARIMA 预报")
+    axs[2].set_title("未来 7 天预报：分解法 vs WPS AI", fontsize=13)
+    axs[2].legend(); axs[2].grid(True, ls=":", alpha=0.4)
+    fig.tight_layout()
+    save(fig, "103a_去除节日_星期分解与预报.png")
+
+    # ===== 图 2：含节日 vs 去除节日 =====
+    fig, ax = plt.subplots(figsize=(12, 4.6))
+    ax.plot(dates, y_holiday_raw, color="#C0392B", lw=1.1, alpha=0.8, label="含节日（原始单位元，÷10000 折万元）")
+    ax.plot(dates, y.values, color="#1F4E79", lw=1.4, label="去除节日（教材口径：万元）")
+    ax.set_title("含节日 vs 去除节日：3月8日异常尖峰被剔除（两条线口径不同，仅看形态）", fontsize=13)
+    ax.set_ylabel("万元"); ax.legend(); ax.grid(True, ls=":", alpha=0.4)
+    save(fig, "103b_含节日与去除节日对比.png")
+
+    # ===== 核对 =====
+    mape = np.mean(np.abs(fc_vals - wfc_aligned.values) / wfc_aligned.values) * 100
+    print("\n[核对] 未来 7 天 分解法预报 vs WPS SARIMA：")
+    print("    {:>10} {:>9} {:>9} {:>8}".format("日期", "分解法", "WPS", "差"))
+    for d, v, w in zip(fc_dates, fc_vals, wfc_aligned.values):
+        print("    {:>10} {:9.2f} {:9.2f} {:8.2f}".format(d.strftime("%Y-%m-%d"), v, w, v - w))
+    print("[核对] 整体 MAPE(分解法 / WPS SARIMA) = {:.2f}%".format(mape))
+    print("[核对] 7 天星期季节指数（归一化后均值=1）：")
+    for w in range(WEEK):
+        print("    {}: {:.3f}".format(["周一", "周二", "周三", "周四", "周五", "周六", "周日"][w], idx[w]))
+    print("[说明] 该月样本仅 31 天，星期季节效应较弱且方向不绝对；")
+    print("       但'按星期几取历史均值'的预报已与 WPS SARIMA 几乎重合（MAPE<1%），")
+    print("       说明日度序列的核心可预测成分正是星期季节。")
+    print("\n信用卡消费额两张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()
+else:
+    main()

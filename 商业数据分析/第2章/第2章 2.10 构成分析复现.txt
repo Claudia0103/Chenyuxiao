@@ -1,0 +1,111 @@
+# ===== 第2章 2.10 构成分析复现 =====
+# 原实现：Excel (2、…/data-有答案/4构成分析-参考.xlsx)，参考含 5 张图
+# 迁移：Python
+# 【项目内涵理解】看整体中各部分的占比（构成/百分比）。
+#   参考含 5 张图：① 产品销售量饼图；② 圆环图；③ 各年份产品销售量堆积柱；
+#   ④ 各年份产品销售量面积图；⑤ 各年份产品销售量折线图。
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/4构成分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/4构成分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+raw = pd.read_excel(XLSX, sheet_name="构成分析", header=None)
+
+# ---------- 区块1：产品类型 / 销售量（饼图数据）----------
+prod_rows = []
+for r in range(raw.shape[0]):
+    if str(raw.iloc[r, 1]) == "产品类型":
+        c = r + 1
+        while c < raw.shape[0] and str(raw.iloc[c, 1]) not in ("", "nan", "None"):
+            name = str(raw.iloc[c, 1]); val = pd.to_numeric(raw.iloc[c, 2], errors="coerce")
+            if pd.notna(val):
+                prod_rows.append((name, val))
+            c += 1
+        break
+prod_df = pd.DataFrame(prod_rows, columns=["产品类型", "销售量"])
+print("【产品销售量构成】")
+total = prod_df["销售量"].sum()
+prod_df["占比"] = (prod_df["销售量"] / total * 100).round(1)
+print(prod_df.to_string(index=False))
+
+# ---------- 区块2：年 / 产品1 / 产品2 / 产品3（堆积柱/面积/折线数据）----------
+year_rows = []
+for r in range(raw.shape[0]):
+    if str(raw.iloc[r, 1]).startswith("年/"):
+        c = r + 1
+        while c < raw.shape[0] and str(raw.iloc[c, 1]) not in ("", "nan", "None"):
+            yr = pd.to_numeric(raw.iloc[c, 1], errors="coerce")
+            if pd.notna(yr):
+                year_rows.append([
+                    int(yr),
+                    pd.to_numeric(raw.iloc[c, 2], errors="coerce"),
+                    pd.to_numeric(raw.iloc[c, 3], errors="coerce"),
+                    pd.to_numeric(raw.iloc[c, 4], errors="coerce"),
+                ])
+            c += 1
+        break
+year_df = pd.DataFrame(year_rows, columns=["年", "产品1", "产品2", "产品3"])
+print("\n【各年份产品销售量】")
+print(year_df.to_string(index=False))
+
+colors = ["#4C78A8", "#F58518", "#54A24B"]
+labels = ["产品1", "产品2", "产品3"]
+x = year_df["年"].astype(int).astype(str)
+
+# ---------- 图1：饼图 ----------
+fig, ax = plt.subplots(figsize=(7, 6))
+ax.pie(prod_df["销售量"], labels=prod_df["产品类型"].astype(str), autopct="%.1f%%",
+       startangle=90, colors=plt.cm.Pastel1.colors)
+ax.set_title("各产品销售量构成（饼图）")
+fig.savefig(f"{CHART_DIR}/210a_构成饼图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/210a_构成饼图.png")
+
+# ---------- 图2：圆环图 ----------
+fig, ax = plt.subplots(figsize=(7, 6))
+w, _t, _a = ax.pie(prod_df["销售量"], labels=prod_df["产品类型"].astype(str),
+                  autopct="%.1f%%", startangle=90, colors=plt.cm.Pastel1.colors,
+                  wedgeprops=dict(width=0.4))
+ax.set_title("各产品销售量构成（圆环图）")
+fig.savefig(f"{CHART_DIR}/210b_构成圆环图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/210b_构成圆环图.png")
+
+# ---------- 图3：堆积柱状图 ----------
+fig, ax = plt.subplots(figsize=(8, 4.5))
+bottom = np.zeros(len(year_df))
+for i, col in enumerate(["产品1", "产品2", "产品3"]):
+    ax.bar(x, year_df[col], bottom=bottom, label=labels[i], color=colors[i])
+    bottom += year_df[col].values
+ax.set_title("各年份产品销售量对比图（堆积柱）"); ax.set_ylabel("销售量")
+ax.legend()
+fig.savefig(f"{CHART_DIR}/210c_堆积柱.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/210c_堆积柱.png")
+
+# ---------- 图4：面积图 ----------
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.stackplot(range(len(year_df)), year_df["产品1"], year_df["产品2"], year_df["产品3"],
+             labels=labels, colors=colors, alpha=0.8)
+ax.set_xticks(range(len(year_df))); ax.set_xticklabels(x)
+ax.set_title("各年份产品销售量对比图（面积图）"); ax.set_ylabel("销售量"); ax.legend()
+fig.savefig(f"{CHART_DIR}/210d_面积图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/210d_面积图.png")
+
+# ---------- 图5：折线图 ----------
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for i, col in enumerate(["产品1", "产品2", "产品3"]):
+    ax.plot(range(len(year_df)), year_df[col], marker="o", label=labels[i], color=colors[i])
+ax.set_xticks(range(len(year_df))); ax.set_xticklabels(x)
+ax.set_title("各年份产品销售量对比图（折线图）"); ax.set_ylabel("销售量"); ax.legend()
+fig.savefig(f"{CHART_DIR}/210e_折线图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/210e_折线图.png")

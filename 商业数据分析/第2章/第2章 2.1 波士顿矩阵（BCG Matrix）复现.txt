@@ -1,0 +1,64 @@
+# ===== 第2章 2.1 波士顿矩阵（BCG Matrix）复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/1-1波士顿矩阵-参考.xlsx)
+# 迁移：Python (pandas + matplotlib)
+# 【项目内涵理解】
+#   波士顿矩阵用两个维度把各品牌分成四象限：
+#     横轴 = 市场占有率(品牌销售额占比)；纵轴 = 销售增长率(销售额环比, 8月vs7月)
+#   两个分类阈值取教材口径：
+#     增长率阈值 = 总市场环比增长率(全市场 8月 vs 7月)
+#     占有率阈值 = 品牌平均市场占有率(各品牌占比的均值)
+#   明星(高增+高占) / 现金牛(低增+高占) / 问题(高增+低占) / 瘦狗(低增+低占)
+import pandas as pd
+import matplotlib.pyplot as plt
+
+XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-1波士顿矩阵-参考.xlsx"
+
+# ① 读取销售明细（表头在首行）
+raw = pd.read_excel(XLSX, sheet_name="销售表", header=0)
+raw.columns = raw.columns.str.strip()
+raw["销售日期"] = pd.to_datetime(raw["销售日期"])
+raw["月份"] = raw["销售日期"].dt.month            # 7月 / 8月
+
+# ② 品牌 × 月份 销售额透视
+piv = raw.pivot_table(values="订单金额", index="品牌",
+                      columns="月份", aggfunc="sum", fill_value=0)
+piv["总计"]     = piv.sum(axis=1)
+total = raw["订单金额"].sum()
+piv["市场占有率"] = piv["总计"] / total            # = 销售额占比
+piv["销售增长率"] = (piv[8] - piv[7]) / piv[7]     # 8月相对7月环比
+
+# ③ 两个分类阈值（教材口径）
+GROWTH_THR = (piv[8].sum() - piv[7].sum()) / piv[7].sum()   # 总市场环比增长率
+SHARE_THR  = piv["市场占有率"].mean()                        # 品牌平均市场占有率
+print(f"总市场环比增长率(增长率阈值) : {GROWTH_THR:.6f}")
+print(f"品牌平均市场占有率(占有率阈值): {SHARE_THR:.6f}\n")
+
+# ④ 四象限分类
+def classify(r):
+    hi_g = r["销售增长率"] >= GROWTH_THR
+    hi_s = r["市场占有率"]  >= SHARE_THR
+    return "明星" if hi_g and hi_s else "现金牛" if not hi_g and hi_s \
+           else "问题" if hi_g and not hi_s else "瘦狗"
+piv["象限"] = piv.apply(classify, axis=1)
+
+# ⑤ 输出分类结果
+result = piv[["总计", "市场占有率", "销售增长率", "象限"]].sort_values("总计", ascending=False)
+print("【波士顿矩阵分类结果】")
+print(result.round(4).to_string())
+
+# ⑥ 画波士顿矩阵散点图（气泡大小=销售额）
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+colors = {"明星": "#E45756", "现金牛": "#4C78A8", "问题": "#F58518", "瘦狗": "#9D9D9D"}
+fig, ax = plt.subplots(figsize=(8, 6))
+for q, g in piv.groupby("象限"):
+    ax.scatter(g["市场占有率"], g["销售增长率"],
+               s=g["总计"] / total * 3000, alpha=0.6,
+               c=colors[q], label=q, edgecolors="white")
+    for b, row in g.iterrows():
+        ax.annotate(b, (row["市场占有率"], row["销售增长率"]),
+                    fontsize=9, ha="center", va="center")
+ax.axvline(SHARE_THR, color="grey", ls="--")
+ax.axhline(GROWTH_THR, color="grey", ls="--")
+ax.set_xlabel("市场占有率（销售额占比）"); ax.set_ylabel("销售增长率（销售额环比）")
+ax.set_title("波士顿矩阵（BCG Matrix）"); ax.legend(title="象限")
+plt.tight_layout(); plt.show()

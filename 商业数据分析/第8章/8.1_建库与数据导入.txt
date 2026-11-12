@@ -1,0 +1,159 @@
+# 8.1_建库与数据导入.py
+# ============================================================
+# 第8章 SQL语言基础与MySQL入门 —— Python 复现（一）
+# 对应教材：1、Windows系统下将数据导入到MySQL的三种方法/
+#           1 create_table.sql（CREATE DATABASE + 13 张 CREATE TABLE + LOAD DATA INFILE）
+#           将数据导入到MySQL的说明.txt（三种导入方式）
+#
+# 教材那一步是装 MySQL、建库、用 LOAD DATA INFILE 把 13 个 CSV 灌进去。
+# 作业要求是把 Excel/Power BI 那套迁移到 Python，SQL 这一章同理：
+# 这里用 Python 自带的 sqlite3 在**内存里**建同一个库、灌同一批 CSV，
+# 不装 MySQL、不落盘、不留 .db 文件，跑完就能验证表结构和行数对不对。
+#
+# 项目内涵：建库就是「先定字段名和类型，再往里填数据」。
+# MySQL 的 LOAD DATA INFILE 读的是**无表头 CSV**，字段名全靠 CREATE TABLE 给，
+# 所以 Python 里 read_csv 必须 header=None + names=...，顺序还不能错。
+#
+# 三种导入方式（教材说明 txt）：
+#   方式1 LOAD DATA INFILE   -> Python 里是 read_csv + to_sql，最快，本脚本用这个
+#   方式2 SQL insert 脚本    -> Python 里是 executemany 逐行插，慢，脚本里也演示一下
+#   方式3 导入向导手填类型   -> 纯 GUI 操作，Python 无对应，只做说明；日期列最容易错
+# ============================================================
+
+import os
+import sqlite3
+import pandas as pd
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+
+CHAPTER_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第8章 SQL语言基础与Mysql入门"
+CSV_DIR = os.path.join(CHAPTER_DIR, "1、Windows系统下将数据导入到MySQL的三种方法",
+                       "方式1", "mysql_csv")
+
+# Kdd99_trans 有 105 万行。默认抽样只用来快速冒烟；改成 None 就是全量导入。
+TRANS_NROWS = 20_000
+
+# 表名 -> (列名, CSV 文件名)。列名顺序照抄 1 create_table.sql，CSV 没有表头。
+TABLES = {
+    "sale": (["year", "market", "sale", "profit"], "sale.csv"),
+    "kdd99_accounts": (["account_id", "district_id", "frequency", "date"], "kdd99_accounts.csv"),
+    "Kdd99_card": (["card_id", "disp_id", "issued", "type"], "Kdd99_card.csv"),
+    "Kdd99_clients": (["client_id", "sex", "birth_date", "district_id"], "Kdd99_clients.csv"),
+    "Kdd99_disp": (["disp_id", "client_id", "account_id", "type"], "Kdd99_disp.csv"),
+    "Kdd99_district": (["A1", "GDP", "A4", "A10", "A11", "A12", "A13", "A14", "A15", "a16"],
+                       "Kdd99_district.csv"),
+    "Kdd99_loans": (["loan_id", "account_id", "date", "amount", "duration", "payments", "status"],
+                    "Kdd99_loans.csv"),
+    "Kdd99_order": (["order_id", "account_id", "bank_to", "account_to", "amount", "k_symbol"],
+                    "Kdd99_order.csv"),
+    "Kdd99_trans": (["trans_id", "account_id", "date", "type", "operation", "amount",
+                     "balance", "k_symbol", "bank", "account"], "Kdd99_trans.csv"),
+    "One": (["x", "a"], "One.csv"),
+    "two": (["x", "b"], "two.csv"),
+    "Table1": (["id", "a"], "Table1.csv"),
+    "Table2": (["id", "b"], "Table2.csv"),
+}
+
+
+def read_csv_auto(path, columns, nrows=None):
+    """教材 CSV 编码不统一：一部分是 gb2312/gb18030，一部分是 utf-8。
+    逐个试，能读通就用哪个，返回 (DataFrame, 编码)。"""
+    # 顺序不能反：GBK 字节用 utf-8 解会报错，可以安全退回 gb18030；
+    # 但 UTF-8 字节用 gb18030 解「不会报错、只会变乱码」，所以必须先试 utf-8。
+    last_err = None
+    for enc in ("utf-8-sig", "gb18030", "gbk", "latin-1"):
+        try:
+            df = pd.read_csv(path, header=None, names=columns, encoding=enc,
+                             nrows=nrows, skipinitialspace=True)
+            return df, enc
+        except UnicodeDecodeError as e:
+            last_err = e
+    raise RuntimeError("所有编码都读不了 {}: {}".format(path, last_err))
+
+
+def create_and_load(conn):
+    """方式1：建表 + 批量灌数据（对应 CREATE TABLE + LOAD DATA INFILE）。"""
+    print("=" * 78)
+    print("方式1  建表 + 批量导入")
+    print("=" * 78)
+    for table, (cols, fname) in TABLES.items():
+        path = os.path.join(CSV_DIR, fname)
+        if not os.path.exists(path):
+            print("  [跳过] 找不到", fname)
+            continue
+        # MySQL 里每个字段都写了类型；sqlite 这里让 pandas 自己推断，够用
+        conn.execute("CREATE TABLE {} ({})".format(
+            table, ", ".join('"{}"'.format(c) for c in cols)))
+        nrows = TRANS_NROWS if table == "Kdd99_trans" else None
+        df, enc = read_csv_auto(path, cols, nrows=nrows)
+        df.to_sql(table, conn, if_exists="append", index=False)
+        cnt = conn.execute("SELECT COUNT(*) FROM {}".format(table)).fetchone()[0]
+        print("  {:<16} {:>9,} 行  {:>2} 列  enc={}".format(table, cnt, len(cols), enc))
+    return conn
+
+
+def demo_insert_mode(conn):
+    """方式2：教材说的 insert 脚本，Python 里就是 executemany 逐行插，慢。"""
+    print("\n" + "=" * 78)
+    print("方式2  逐行 INSERT（教材说全量要 1 小时，这里拿小表 One 演示）")
+    print("=" * 78)
+    conn.execute("CREATE TABLE one_by_insert (x INTEGER, a TEXT)")
+    df, _ = read_csv_auto(os.path.join(CSV_DIR, "One.csv"), ["x", "a"])
+    rows = df.where(pd.notna(df), None).values.tolist()
+    conn.executemany("INSERT INTO one_by_insert VALUES (?, ?)", rows)
+    got = conn.execute("SELECT COUNT(*) FROM one_by_insert").fetchone()[0]
+    print("  插入 {} 行，与方式1 的 One 表一致：{}".format(
+        got, got == conn.execute("SELECT COUNT(*) FROM One").fetchone()[0]))
+
+
+def verify(conn):
+    """跑两条教材风格的 SQL，确认库真的能用。"""
+    print("\n" + "=" * 78)
+    print("验证：在 sqlite 里跑教材风格的 SQL")
+    print("=" * 78)
+
+    q1 = "SELECT year, market, sale, profit FROM sale WHERE year = 2012"
+    print("\n  SQL:", q1)
+    print(pd.read_sql_query(q1, conn).to_string(index=False))
+
+    q2 = ("SELECT market, SUM(sale) AS 销售额, SUM(profit) AS 利润 "
+          "FROM sale GROUP BY market ORDER BY 销售额 DESC")
+    print("\n  SQL:", q2)
+    print(pd.read_sql_query(q2, conn).to_string(index=False))
+
+    q3 = ("SELECT a.status, COUNT(*) AS 笔数, SUM(a.amount) AS 金额 "
+          "FROM Kdd99_loans a GROUP BY a.status")
+    print("\n  SQL:", q3)
+    print(pd.read_sql_query(q3, conn).to_string(index=False))
+
+
+def main():
+    if not os.path.isdir(CSV_DIR):
+        raise FileNotFoundError("教材数据目录不存在：\n" + CSV_DIR)
+
+    print("教材 1 create_table.sql 一共建了 {} 张表".format(len(TABLES)))
+    print("Kdd99_trans 当前设置 TRANS_NROWS = {}（改成 None 导全量 105 万行）".format(TRANS_NROWS))
+    print("数据库放在 sqlite3.connect(':memory:')，跑完自动消失，不生成 .db 文件\n")
+
+    conn = sqlite3.connect(":memory:")
+    create_and_load(conn)
+    demo_insert_mode(conn)
+    verify(conn)
+    conn.close()
+
+    print("\n" + "=" * 78)
+    print("三种导入方式对照（教材 将数据导入到MySQL的说明.txt）")
+    print("  方式1 LOAD DATA INFILE -> read_csv + to_sql        快，效率高，需处理编码/安全路径")
+    print("  方式2 INSERT 脚本      -> executemany              简单但慢，全量约 1 小时")
+    print("  方式3 导入向导         -> 纯 GUI 手工设置类型      日期列最容易出错，Python 无对应")
+    print("\n安全模式差异：标准版 load data infile 'D:/mysql_csv/xxx.csv'，")
+    print("安全模式版必须放到 MySQL 的 Uploads 目录并用 LOCAL INFILE；")
+    print("MAC 版路径是 /Users/.../mysql_csv/。Python 里只要改 CSV_DIR 一个变量就行。")
+    print("\n8.1 完成：13 张表建好、CSV 导入并跑通查询，无落盘文件")
+
+
+if __name__ == "__main__":
+    main()

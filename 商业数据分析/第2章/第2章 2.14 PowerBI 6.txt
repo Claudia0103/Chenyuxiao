@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.19 PowerBI：快速搭建销售看板 复现
+========================================================
+原教材实现：PowerBI（5、PowerBI基本操作/快速搭建销售看板.pbix）
+本项目迁移：Python (pandas + matplotlib)
+数据源：5、PowerBI基本操作/零售订单表.xlsx（6644 行零售订单）
+
+【项目内涵理解】
+销售看板 = 一张零售订单明细表的多维聚合看板：
+  字段：订单号/订单时间/实际支付/城市/数量/商品名称/商品类别
+看板常用指标：总销售额、各城市销售对比、各商品类别占比、时间趋势、TOP 商品。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CASE = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取 ----------
+df = pd.read_excel(f"{CASE}/零售订单表.xlsx")
+df["订单时间"] = pd.to_datetime(df["订单时间"])
+df["月份"] = df["订单时间"].dt.to_period("M").astype(str)
+
+print("【数据概览】")
+print(f"订单行数 = {len(df)}，总销售额 = {df['实际支付'].sum():,.1f}，总销量 = {df['数量'].sum():,}")
+print(f"覆盖城市数 = {df['城市'].nunique()}，商品类别数 = {df['商品类别'].nunique()}\n")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 2. 各城市销售额 ----------
+city = df.groupby("城市")["实际支付"].sum().sort_values(ascending=False)
+print("【各城市销售额 TOP10】")
+print(city.head(10).to_string())
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.bar(city.head(10).index, city.head(10).values, color="#4C78A8")
+ax.set_title("各城市销售额 TOP10"); ax.set_ylabel("销售额"); plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "219a_城市销售额.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 3. 商品类别占比 ----------
+cat = df.groupby("商品类别")["实际支付"].sum().sort_values(ascending=False)
+print("\n【商品类别销售额占比】")
+print((cat / cat.sum() * 100).round(2).to_string())
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.pie(cat, labels=cat.index, autopct="%1.1f%%", startangle=90)
+ax.set_title("商品类别销售额占比")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "219b_类别占比.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 月度趋势 ----------
+monthly = df.groupby("月份")["实际支付"].sum().reset_index().sort_values("月份")
+fig, ax = plt.subplots(figsize=(9, 4.5))
+ax.plot(monthly["月份"], monthly["实际支付"], marker="o", color="#54A24B")
+ax.set_title("月度销售额趋势"); ax.set_ylabel("销售额"); plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "219c_月度趋势.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 5. TOP 商品 ----------
+top = df.groupby("商品名称")["实际支付"].sum().sort_values(ascending=False).head(10)
+print("\n【TOP10 商品（按销售额）】")
+print(top.to_string())

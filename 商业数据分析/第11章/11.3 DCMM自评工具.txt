@@ -1,0 +1,157 @@
+# 11.3_DCMM自评工具.py
+# ============================================================
+# 第11章 数据治理介绍 —— Python 复现（三）· 可运行工具
+# 作业要求：把教材引用的 DCMM 标准（GB/T 36073-2018）做成“可复用的自评工具”。
+#
+# 工具用法：
+#   1) 在下方 DEMO_SCORES 里，给 8 个能力域分别填 1~5 的当前成熟度（也可改 INPUT_SCORES 为交互输入）
+#   2) 运行脚本 → 自动输出：综合成熟度等级、雷达图、短板诊断、改进建议
+#
+# 模型依据：GB/T 36073-2018 的 8 个能力域 + 5 个成熟度等级（同 11.1）。
+# 评分规则：综合成熟度 = 各域得分的加权平均（默认等权；权重可在 WEIGHTS 调整）。
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from math import pi
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ------------------------------------------------------------
+# DCMM 8 能力域（与 11.1 一致）
+# ------------------------------------------------------------
+DOMAINS = [
+    "数据战略", "数据治理", "数据架构", "数据应用",
+    "数据安全", "数据质量", "数据标准", "数据生命周期",
+]
+# 各域权重（默认等权 1.0；可按企业实际侧重点调整，会自动归一化）
+WEIGHTS = {d: 1.0 for d in DOMAINS}
+
+# 5 个成熟度等级定义（用于把综合分数映射到等级）
+LEVELS = [
+    (1, "初始级", "被动、项目级管理，无统一流程"),
+    (2, "受管理级", "有管理流程，指定人员初步管理"),
+    (3, "稳健级", "组织级标准化，管理规范化"),
+    (4, "量化管理级", "过程与结果可量化分析监控"),
+    (5, "优化级", "流程实时优化，行业最佳实践"),
+]
+
+# ------------------------------------------------------------
+# 演示用评分（1~5）。换成你单位的真实自评即可。
+# ------------------------------------------------------------
+DEMO_SCORES = {
+    "数据战略": 3, "数据治理": 2, "数据架构": 3, "数据应用": 4,
+    "数据安全": 3, "数据质量": 2, "数据标准": 3, "数据生命周期": 2,
+}
+
+# 若想改为交互输入，把下面改成 True；否则用 DEMO_SCORES
+INTERACTIVE = False
+
+
+def get_scores():
+    if INTERACTIVE:
+        scores = {}
+        print("请为下列 8 个能力域打分（1=初始级 … 5=优化级）：")
+        for d in DOMAINS:
+            while True:
+                try:
+                    v = float(input(f"  {d}："))
+                    if 1 <= v <= 5:
+                        scores[d] = v
+                        break
+                    print("    请输入 1~5 之间的数")
+                except ValueError:
+                    print("    请输入数字")
+        return scores
+    return dict(DEMO_SCORES)
+
+
+def level_of(score):
+    """把 1~5 的综合分映射到等级名称（四舍五入取最近等级，并附区间判定）。"""
+    nearest = int(round(score))
+    nearest = max(1, min(5, nearest))
+    for lv, name, desc in LEVELS:
+        if lv == nearest:
+            return lv, name, desc
+    return 3, "稳健级", LEVELS[2][2]
+
+
+def assess(scores):
+    wsum = sum(WEIGHTS[d] for d in DOMAINS)
+    weighted = sum(scores[d] * WEIGHTS[d] for d in DOMAINS) / wsum
+    lv, name, desc = level_of(weighted)
+    # 短板：低于整体加权分的域
+    gaps = sorted([(d, scores[d]) for d in DOMAINS if scores[d] < weighted],
+                  key=lambda x: x[1])
+    return weighted, lv, name, desc, gaps
+
+
+def print_report(scores):
+    weighted, lv, name, desc, gaps = assess(scores)
+    print("=" * 64)
+    print("DCMM 数据管理能力成熟度 —— 自评报告")
+    print("=" * 64)
+    df = pd.DataFrame({
+        "能力域": DOMAINS,
+        "权重": [WEIGHTS[d] for d in DOMAINS],
+        "自评等级(1-5)": [scores[d] for d in DOMAINS],
+    })
+    print(df.to_string(index=False))
+    print("-" * 64)
+    print(f"综合成熟度（加权）：{weighted:.2f} / 5.00")
+    print(f"对应等级：L{lv} {name}  —— {desc}")
+    print("-" * 64)
+    if gaps:
+        print("短板诊断（低于综合水平的领域，建议优先改进）：")
+        for d, s in gaps:
+            print(f"  · {d}：{s:.0f} 级（综合 {weighted:.2f}）")
+    else:
+        print("各能力域均不低于综合水平，分布较均衡。")
+    print("=" * 64)
+    return weighted, lv, name, desc, gaps
+
+
+def radar(scores, weighted, lv, name):
+    vals = [scores[d] for d in DOMAINS]
+    N = len(DOMAINS)
+    angles = [n / float(N) * 2 * pi for n in range(N)]
+    vals2 = vals + vals[:1]
+    angles2 = angles + angles[:1]
+    fig, ax = plt.subplots(figsize=(7.5, 7.5), subplot_kw=dict(polar=True))
+    ax.set_theta_offset(pi / 2)
+    ax.set_theta_direction(-1)
+    ax.set_xticks(angles)
+    ax.set_xticklabels(DOMAINS, fontsize=10)
+    ax.set_ylim(0, 5)
+    ax.set_yticks([1, 2, 3, 4, 5])
+    ax.set_yticklabels(["L1", "L2", "L3", "L4", "L5"], fontsize=8, color="#888")
+    ax.plot(angles2, vals2, color="#2c7fb8", linewidth=2, label="当前成熟度")
+    ax.fill(angles2, vals2, color="#2c7fb8", alpha=0.25)
+    # 综合水平参考圆
+    ax.plot(angles2, [weighted] * (N + 1), color="#e6550d", linewidth=1.6,
+            linestyle="--", label=f"综合 {weighted:.2f}")
+    ax.set_title(f"DCMM 成熟度雷达图  ·  综合判定 L{lv} {name}",
+                 fontsize=12.5, fontweight="bold", pad=22)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.18, 1.10), fontsize=9)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "11.3_DCMM自评雷达图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight"); plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+if __name__ == "__main__":
+    scores = get_scores()
+    weighted, lv, name, desc, gaps = print_report(scores)
+    radar(scores, weighted, lv, name)
+    print("\n11.3 完成：DCMM 自评工具运行完毕。改 DEMO_SCORES 或开 INTERACTIVE 即可自评。")

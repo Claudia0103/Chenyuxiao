@@ -1,0 +1,145 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.14 PowerBI 案例1：分省销售分析 复现
+===============================================================
+原教材实现：PowerBI（5、PowerBI基本操作/案例1/分省销售分析.pbix）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+案例1 是一个典型的“星型模型”销售库（Northwind 中文精简版）：
+  - 事实表：订单表明细表（每行 = 一张订单里的一个商品，含 销售金额 / 销售成本）
+  - 维度表：
+      订单表   —— 订单ID → 省份(ShipProvince)、下单日期(OrderDate)、负责雇员(EmployeeID)
+      商品表   —— 产口ID(=产品) → 商品名、类别ID(CategoryID)
+      商品类型表 —— 类别ID → 类别名(CategoryName)
+      雇员表   —— EmployeeID → 姓名、城市、门店
+“分省销售分析”本质就是：把事实表通过 订单ID / 产口ID 关联到各维度，
+然后按 省份 / 商品类别 / 月份 / 雇员 做聚合，得到销售额、成本、利润(=金额-成本)。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CASE = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/案例1"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取五张表（CSV 编码不统一：订单系为 GBK，商品/雇员系为 UTF-8） ----------
+def read_csv_safe(path):
+    for enc in ("gb18030", "utf-8-sig", "gbk"):
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return pd.read_csv(path)   # 最后兜底
+
+order = read_csv_safe(f"{CASE}/订单表.csv")
+detail = read_csv_safe(f"{CASE}/订单表明细表.csv")
+product = read_csv_safe(f"{CASE}/商品表.csv")
+category = read_csv_safe(f"{CASE}/商品类型表.csv")
+employee = read_csv_safe(f"{CASE}/雇员表.csv")
+
+# 注意源数据里“产品ID”被错写成“产口ID”，这里统一修正列名
+detail = detail.rename(columns={"产口ID": "ProductID"})
+order["OrderDate"] = pd.to_datetime(order["OrderDate"])
+order["月份"] = order["OrderDate"].dt.to_period("M").astype(str)
+
+# ---------- 2. 星型模型：事实表关联维度 ----------
+fact = detail.merge(order, left_on="订单ID", right_on="OrderID", how="left")
+fact = fact.merge(product, on="ProductID", how="left")
+fact = fact.merge(category, on="CategoryID", how="left")
+fact = fact.merge(employee[["EmployeeID", "FullName", "City", "store"]],
+                  on="EmployeeID", how="left")
+fact["利润"] = fact["销售金额"] - fact["销售成本"]
+
+print("【关联后的星型模型（事实表）前 5 行】")
+print(fact[["订单ID", "ShipProvince", "CategoryName", "销售金额", "销售成本", "利润", "月份"]].head(5).to_string(index=False))
+print(f"明细行数 = {len(fact)}，关联后省份缺失 = {fact['ShipProvince'].isna().sum()} 行\n")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 3. 各省份销售分析 ----------
+by_prov = fact.groupby("ShipProvince").agg(
+    销售额=("销售金额", "sum"), 成本=("销售成本", "sum"),
+    利润=("利润", "sum"), 订单数=("订单ID", "nunique")).reset_index()
+by_prov = by_prov.sort_values("销售额", ascending=False)
+by_prov["利润率"] = (by_prov["利润"] / by_prov["销售额"] * 100).round(2)
+print("【各省份销售汇总】")
+print(by_prov.to_string(index=False))
+print(f"\n总销售额 = {fact['销售金额'].sum():,.0f}，总利润 = {fact['利润'].sum():,.0f}")
+print(f"省份销售额 TOP1 = {by_prov.iloc[0]['ShipProvince']}（{by_prov.iloc[0]['销售额']:,.0f}）\n")
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.bar(by_prov["ShipProvince"], by_prov["销售额"], color="#4C78A8", label="销售额")
+ax2 = ax.twinx()
+ax2.plot(by_prov["ShipProvince"], by_prov["利润率"], color="#E45756", marker="o", label="利润率(%)")
+ax.set_title("各省份销售额与利润率"); ax.set_ylabel("销售额"); ax2.set_ylabel("利润率(%)")
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "214a_各省销售额.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 省份 × 商品类别（构成） ----------
+cross = fact.pivot_table(values="销售金额", index="ShipProvince",
+                         columns="CategoryName", aggfunc="sum", fill_value=0)
+cross = cross.loc[by_prov["ShipProvince"]]
+fig, ax = plt.subplots(figsize=(9, 5))
+bottom = [0] * len(cross)
+palette = plt.cm.tab10.colors
+for i, c in enumerate(cross.columns):
+    ax.bar(cross.index, cross[c], bottom=bottom, color=palette[i % 10], label=c)
+    bottom = [b + v for b, v in zip(bottom, cross[c])]
+ax.set_title("各省份 × 商品类别 销售额构成（堆叠）"); ax.set_ylabel("销售额")
+ax.legend(title="类别", bbox_to_anchor=(1.01, 1), loc="upper left")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "214b_省类别构成.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 5. 月度销售趋势 ----------
+by_month = fact.groupby("月份").agg(销售额=("销售金额", "sum"), 利润=("利润", "sum")).reset_index()
+by_month = by_month.sort_values("月份")
+print("【月度销售趋势】")
+print(by_month.to_string(index=False))
+fig, ax = plt.subplots(figsize=(9, 4.5))
+ax.plot(by_month["月份"], by_month["销售额"], marker="o", color="#4C78A8", label="销售额")
+ax.plot(by_month["月份"], by_month["利润"], marker="s", color="#54A24B", label="利润")
+ax.set_title("月度销售额与利润趋势"); ax.set_ylabel("金额"); ax.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "214c_月度趋势.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 6. 商品类别占比 + TOP 商品 ----------
+cat_sale = fact.groupby("CategoryName")["销售金额"].sum().sort_values(ascending=False)
+print("\n【商品类别销售额占比】")
+print((cat_sale / cat_sale.sum() * 100).round(2).to_string())
+top_prod = fact.groupby("ProductName").agg(销售额=("销售金额", "sum"), 销量=("销售金额", "count")) \
+               .sort_values("销售额", ascending=False).head(10)
+print("\n【TOP10 商品（按销售额）】")
+print(top_prod.to_string())
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+axes[0].pie(cat_sale, labels=cat_sale.index, autopct="%1.1f%%", startangle=90)
+axes[0].set_title("商品类别销售额占比")
+axes[1].barh(top_prod.index[::-1], top_prod["销售额"][::-1], color="#F58518")
+axes[1].set_title("TOP10 商品销售额")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "214d_类别占比TOP.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 7. 雇员业绩 ----------
+emp_sale = fact.groupby(["EmployeeID", "FullName", "store"]).agg(
+    销售额=("销售金额", "sum"), 订单数=("订单ID", "nunique")).reset_index() \
+    .sort_values("销售额", ascending=False)
+print("\n【雇员销售业绩】")
+print(emp_sale.to_string(index=False))

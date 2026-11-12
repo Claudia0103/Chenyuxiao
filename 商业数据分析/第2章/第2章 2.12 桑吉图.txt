@@ -1,0 +1,154 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.12 桑吉图（Sankey）复现
+================================================
+原教材实现：Excel（2、引申出的分析方法/data-无答案/6桑吉图.xlsx）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+桑吉图用来展示“流量如何在多个环节之间流动/分流”（常用于网站用户路径、
+转化漏斗、能源流向等）。教材这份数据是一张网站访问路径表：
+  - 列：ID、来源、目标、流量、描述
+  - 含义：从“来源”页面跳转到“目标”页面的人数（流量）
+复现要点：
+  1) 用 pandas 读取并汇总每条 (来源→目标) 的流量；
+  2) 自绘桑吉图：节点按“所处层级”排成若干列，节点高度=进出流量之和，
+     连线上线宽与流量成正比，直观看到用户从首页层层分流去向。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import PathPatch
+from matplotlib.path import Path as MplPath
+import numpy as np
+
+# ---------- 0. 路径配置 ----------
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-无答案/6桑吉图.xlsx"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取流量明细 ----------
+flow = pd.read_excel(XLSX, sheet_name="Sheet1")
+flow = flow[["来源", "目标", "流量"]].dropna()
+flow["流量"] = flow["流量"].astype(float)
+print("【原始流量明细（前 8 行）】")
+print(flow.head(8).to_string(index=False))
+print(f"共 {len(flow)} 条流向记录，总展示流量 = {flow['流量'].sum():.0f}\n")
+
+# ---------- 2. 构建节点与层级（按最长上游路径定层级） ----------
+nodes = pd.unique(flow[["来源", "目标"]].values.ravel())
+node_out = {n: flow.loc[flow["来源"] == n, "流量"].sum() for n in nodes}
+node_in = {n: flow.loc[flow["目标"] == n, "流量"].sum() for n in nodes}
+node_total = {n: max(node_out[n], node_in[n]) for n in nodes}   # 节点高度=最大进出流量
+
+# 层级：没有作为“目标”出现的节点为根（起点，层级 0），其余层级 = 上游最长路径+1
+targets = set(flow["目标"])
+layer = {}
+roots = [n for n in nodes if n not in targets]
+for r in roots:
+    layer[r] = 0
+changed = True
+while changed:
+    changed = False
+    for _, row in flow.iterrows():
+        s, t = row["来源"], row["目标"]
+        if s in layer and t not in layer:
+            layer[t] = layer[s] + 1
+            changed = True
+        elif s in layer and t in layer:
+            if layer[t] < layer[s] + 1:
+                layer[t] = layer[s] + 1
+                changed = True
+# 兜底：若有孤立环导致未赋值
+for n in nodes:
+    layer.setdefault(n, 0)
+
+from collections import defaultdict
+layers = defaultdict(list)
+for n, l in layer.items():
+    layers[l].append(n)
+
+# ---------- 3. 自绘桑吉图 ----------
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+x_gap = 1.0
+y_scale = 1.0 / 50.0        # 流量 -> 高度比例
+node_colors = plt.cm.tab20(np.linspace(0, 1, len(nodes)))
+color_map = {n: node_colors[i] for i, n in enumerate(nodes)}
+
+fig, ax = plt.subplots(figsize=(11, 7))
+# 先为每个节点计算其所在列的 y 起点（从上到下堆叠）
+node_pos = {}   # node -> (x, y_bottom, height)
+for l, ns in layers.items():
+    x = l * x_gap
+    y_cursor = 0.0
+    for n in sorted(ns, key=lambda x: -node_total[x]):
+        h = node_total[n] * y_scale
+        node_pos[n] = (x, y_cursor, h)
+        y_cursor += h + 0.15
+    # 记录该列总高度用于居中
+    layers[l] = (x, y_cursor)
+
+# 计算每列整体高度用于居中平移
+col_heights = {l: v[1] for l, v in layers.items()}
+max_h = max(col_heights.values())
+for n, (x, yb, h) in node_pos.items():
+    l = layer[n]
+    shift = (max_h - col_heights[l]) / 2.0
+    node_pos[n] = (x, yb + shift, h)
+
+# 画节点矩形
+for n, (x, yb, h) in node_pos.items():
+    ax.add_patch(plt.Rectangle((x - 0.04, yb), 0.08, h,
+                               facecolor=color_map[n], edgecolor="white", zorder=3))
+    ax.text(x - 0.06 if x > 0 else x + 0.06, yb + h / 2, n,
+            ha="right" if x > 0 else "left", va="center", fontsize=9, zorder=4)
+
+# 画连线：记录每个节点“已用到的上/下端”游标
+src_cursor = {n: node_pos[n][1] for n in nodes}      # 源节点从下往上接出
+tgt_cursor = {n: node_pos[n][1] for n in nodes}      # 目标节点从下往上接入
+for _, row in flow.iterrows():
+    s, t = row["来源"], row["目标"]
+    w = row["流量"] * y_scale
+    xs, ybs, hs = node_pos[s]
+    xt, ybt, ht = node_pos[t]
+    y_s = src_cursor[s] + w / 2
+    y_t = tgt_cursor[t] + w / 2
+    src_cursor[s] += w
+    tgt_cursor[t] += w
+    x0, x1 = xs + 0.04, xt - 0.04
+    verts = [(x0, y_s - w / 2), (x0, y_s + w / 2),
+             (x1, y_t + w / 2), (x1, y_t - w / 2)]
+    codes = [MplPath.MOVETO, MplPath.LINETO, MplPath.LINETO, MplPath.LINETO]
+    patch = PathPatch(MplPath(verts, codes),
+                      facecolor=color_map[s], alpha=0.35, edgecolor="none", zorder=1)
+    ax.add_patch(patch)
+    # 连线中线标注流量
+    xs_mid = (x0 + x1) / 2
+    ax.text(xs_mid, (y_s + y_t) / 2, f"{row['流量']:.0f}",
+            ha="center", va="center", fontsize=7, color="#444", zorder=2)
+
+ax.set_xlim(-0.3, (max(layers.keys())) * x_gap + 0.3)
+ax.set_ylim(-0.5, max_h + 0.5)
+ax.axis("off")
+ax.set_title("桑吉图：网站用户访问路径与流量分流", fontsize=13)
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "212_桑吉图.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 输出各节点汇总 ----------
+print("【节点流量汇总】（按层级）")
+summary = pd.DataFrame({
+    "节点": list(nodes),
+    "层级": [layer[n] for n in nodes],
+    "流入": [node_in[n] for n in nodes],
+    "流出": [node_out[n] for n in nodes],
+}).sort_values(["层级", "流出"], ascending=[True, False])
+print(summary.to_string(index=False))

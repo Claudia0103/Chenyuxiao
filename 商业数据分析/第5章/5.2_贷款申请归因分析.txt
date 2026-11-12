@@ -1,0 +1,226 @@
+# 5.2_贷款申请归因分析.py
+# ============================================================
+# 第5章 案例2：WPS 归因分析案例 —— 银行案例，Python 复现
+#
+# 源数据：第5章 业务数据分析/第5章 WPS归因分析案例-银行案例/
+#         归因分析数据.xlsx    1597 行贷款申请记录（编号 / 日期 / 渠道）
+#         归因分析 - 结果.xlsx 教材做好的透视表 + 2 张图
+#         2021年5月贷款申请情况月度分析报告.docx  文字结论 + 图1-3 归因表
+#
+# 要复现的 3 张图：
+#   ① 贷款申请月度变化趋势：柱（申请量）+ 折线（环比变化率，次坐标轴）
+#   ② 各渠道申请构成月度变化趋势：100% 堆积柱（3 个渠道占比）
+#   ③ 归因分析渠道价值贡献：4月/5月/差异/贡献度 表格 + 贡献度条形
+#
+# 项目内涵：本月申请量掉了，掉在哪儿？WPS 里的做法是先做透视表按「年月 × 渠道」
+# 计数，再看环比，最后把总变化量按渠道拆开算贡献度。Python 里对应
+# groupby/pivot_table + pct_change + 一个除法。
+#
+# 注意口径：这里的环比是标准口径 (本期-上期)/上期，
+# 与第3章案例1教材用的 (本期-上期)/本期 不是一回事，别混。
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+CASE_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第5章 业务数据分析/第5章 WPS归因分析案例-银行案例"
+DATA_PATH = os.path.join(CASE_DIR, "归因分析数据.xlsx")
+
+CHANNELS = ["理财经理（柜台）", "手机银行", "自助机"]
+COLORS = ["#4C78A8", "#F58518", "#54A24B"]
+PREV_MONTH = "2021年4月"
+THIS_MONTH = "2021年5月"
+
+
+def load_data():
+    df = pd.read_excel(DATA_PATH, sheet_name="贷款申请表")
+    df.columns = [str(c).strip() for c in df.columns]
+    df["申请日期"] = pd.to_datetime(df["申请日期"])
+    period = df["申请日期"].dt.to_period("M")
+    # 教材的年月标签写「2020年11月」，不带前导零
+    df["申请年月"] = ["{}年{}月".format(p.year, p.month) for p in period]
+    df["_period"] = period
+    return df
+
+
+def make_pivot(df):
+    """年月 × 渠道 的申请量透视表，等价于 WPS 的数据透视表。"""
+    months = sorted(df["_period"].unique())
+    labels = ["{}年{}月".format(p.year, p.month) for p in months]
+    pt = df.pivot_table(index="_period", columns="申请渠道",
+                        values="申请书编号（主键）", aggfunc="count", fill_value=0)
+    pt = pt.reindex(index=months, columns=[c for c in CHANNELS if c in pt.columns], fill_value=0)
+    pt.index = labels
+    return pt
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", path)
+
+
+def chart_trend(pt):
+    """① 申请量柱 + 环比折线（双轴）。第一个月没有上月，环比留空。"""
+    total = pt.sum(axis=1)
+    mom = total.pct_change() * 100          # 标准环比：(本期-上期)/上期
+
+    fig, ax = plt.subplots(figsize=(10, 5.4))
+    bars = ax.bar(pt.index, total.values, color="#4C78A8", width=0.6, label="贷款申请量")
+    for b, v in zip(bars, total.values):
+        ax.text(b.get_x() + b.get_width() / 2, v + 4, str(int(v)),
+                ha="center", va="bottom", fontsize=9)
+    ax.set_ylabel("贷款申请量（笔）", color="#2F5597")
+    ax.set_ylim(0, total.max() * 1.22)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=9)
+
+    ax2 = ax.twinx()
+    ax2.plot(pt.index, mom.values, color="#E45756", marker="o", linewidth=2,
+             label="环比变化率")
+    for i, v in enumerate(mom.values):
+        if not np.isnan(v):
+            ax2.text(i, v + 6, "{:.1f}%".format(v), ha="center", fontsize=8, color="#C00000")
+    ax2.axhline(0, color="#999999", ls="--", linewidth=0.8)
+    ax2.set_ylabel("环比变化率（%）", color="#C00000")
+    ax2.set_ylim(min(mom.min() * 1.3, -20), max(mom.max() * 1.25, 20))
+    ax.set_title("贷款申请月度变化趋势")
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.tight_layout()
+    save(fig, "52a_贷款申请月度趋势.png")
+    return total, mom
+
+
+def chart_channel_share(pt):
+    """② 100% 堆积柱：每个月 3 个渠道各占多少（教材 chart2 是 percentStacked）。"""
+    share = pt.div(pt.sum(axis=1), axis=0) * 100
+    fig, ax = plt.subplots(figsize=(10, 5.4))
+    bottom = np.zeros(len(pt))
+    for ch, color in zip(pt.columns, COLORS):
+        vals = share[ch].values
+        ax.bar(pt.index, vals, bottom=bottom, width=0.6, label=ch, color=color)
+        for i, (v, b) in enumerate(zip(vals, bottom)):
+            if v >= 6:
+                ax.text(i, b + v / 2, "{:.1f}%".format(v),
+                        ha="center", va="center", fontsize=8, color="white", fontweight="normal")
+        bottom += vals
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("渠道占比")
+    ax.set_title("各渠道贷款申请构成月度变化趋势（100% 堆积）")
+    ax.legend(loc="lower right", fontsize=9, ncol=3)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=9)
+    fig.tight_layout()
+    save(fig, "52b_各渠道申请构成.png")
+    return share
+
+
+def chart_attribution(pt):
+    """③ 指标归因：总变化量按渠道拆开，贡献度 = 该渠道变化量 / 总变化量。"""
+    prev = pt.loc[PREV_MONTH]
+    cur = pt.loc[THIS_MONTH]
+    total_prev = prev.sum()
+    total_cur = cur.sum()
+    diff_total = total_cur - total_prev
+
+    # 按 Word 图1-3 的列顺序摆：总量、自助机、理财经理柜台、手机app
+    order = ["贷款申请量", "自助机", "理财经理（柜台）", "手机银行"]
+    col_label = ["贷款申请量", "自助机申请量", "理财经理柜台", "手机app申请量"]
+    prev_row = [total_prev] + [prev[c] for c in order[1:]]
+    cur_row = [total_cur] + [cur[c] for c in order[1:]]
+    diff_row = [b - a for a, b in zip(prev_row, cur_row)]
+    contrib_values = [d / diff_total for d in diff_row]   # 合计恰好 = 1
+    contrib = dict(zip(order, contrib_values))
+
+    fig = plt.figure(figsize=(10, 6.2))
+    ax_t = fig.add_subplot(2, 1, 1)
+    ax_t.axis("off")
+    ax_t.set_title("归因分析：{} 贷款申请量为什么下降".format(THIS_MONTH), fontsize=13)
+
+    cell_text = [
+        [str(int(v)) for v in prev_row],
+        [str(int(v)) for v in cur_row],
+        [str(int(v)) for v in diff_row],
+        ["{:.2f}%".format(v * 100) for v in contrib_values],
+    ]
+    tbl = ax_t.table(cellText=cell_text, colLabels=col_label,
+                     rowLabels=[PREV_MONTH, THIS_MONTH, "差异", "贡献度"],
+                     cellLoc="center", rowLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1, 1.9)
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#BBBBBB")
+        if r == 0 or c == -1:
+            cell.set_facecolor("#E8EEF7")
+            cell.set_text_props(fontweight="normal")
+        if r == 4 and c >= 1 and contrib_values[c] > 0.1:
+            cell.set_text_props(color="#C00000", fontweight="normal")
+
+    ax_b = fig.add_subplot(2, 1, 2)
+    names = ["自助机", "理财经理柜台", "手机app"]
+    vals = contrib_values[1:]
+    bar_colors = ["#54A24B" if v < 0 else "#C00000" for v in vals]
+    bars = ax_b.barh(names, [v * 100 for v in vals], color=bar_colors, height=0.55)
+    for b, v in zip(bars, vals):
+        x = v * 100
+        ax_b.text(x + (1.5 if x >= 0 else -1.5), b.get_y() + b.get_height() / 2,
+                  "{:.2f}%".format(x), va="center",
+                  ha="left" if x >= 0 else "right", fontsize=10)
+    ax_b.axvline(0, color="#666666", linewidth=0.9)
+    ax_b.set_xlim(-20, 75)
+    ax_b.set_xlabel("对总变化的贡献度（%）")
+    ax_b.grid(axis="x", ls=":", alpha=0.5)
+    ax_b.set_title("各渠道价值贡献（正=拖累申请量下降，负=对冲）", fontsize=11)
+    fig.tight_layout()
+    save(fig, "52c_渠道价值贡献归因.png")
+    return contrib, diff_row, diff_total
+
+
+def main():
+    df = load_data()
+    pt = make_pivot(df)
+    print("贷款申请记录: {} 行，{} 个年月，{} 个渠道".format(len(df), len(pt), len(pt.columns)))
+    print("\n透视表（年月 × 渠道）:")
+    print(pt.to_string())
+
+    total, mom = chart_trend(pt)
+    share = chart_channel_share(pt)
+    contrib, diff_row, diff_total = chart_attribution(pt)
+
+    print("\n[核对] 月度申请量:", dict(zip(total.index, total.values.astype(int))))
+    print("[核对] {} 环比 = {:.2f}%".format(THIS_MONTH, mom.loc[THIS_MONTH]))
+    print("[核对] {} 两渠道(柜台+手机银行)占比 = {:.2f}%".format(
+        THIS_MONTH, share.loc[THIS_MONTH, "理财经理（柜台）"] + share.loc[THIS_MONTH, "手机银行"]))
+    print("[核对] 差异: 总量 {} / 自助机 {} / 柜台 {} / 手机银行 {}".format(*diff_row))
+    print("[核对] 贡献度:", {k: "{:.2f}%".format(v * 100) for k, v in contrib.items()})
+    print("[核对] 三渠道贡献度合计 = {:.4f}（总量那一行本身是 1，不重复计入）".format(
+        sum(list(contrib.values())[1:])))
+
+    print("\n[结论 · 对应教材 Word 报告]")
+    print("  5 月申请量 {} 笔，比 4 月少 {} 笔，环比 {:.2f}%。".format(
+        int(total.loc[THIS_MONTH]), -diff_total, mom.loc[THIS_MONTH]))
+    print("  下降主要来自理财经理柜台和手机银行，两者合计贡献 {:.2f}%；".format(
+        (contrib["理财经理（柜台）"] + contrib["手机银行"]) * 100))
+    print("  自助机反而多了 {} 笔，贡献 {:+.2f}%，三项加起来正好 100%，"
+          "说明向线上转移没做成。".format(diff_row[1], contrib["自助机"] * 100))
+    print("  教材给的两条优化与验证思路：")
+    print("    A 自助机宣传/堂内协调流程 -> 选 n 对同规模网点分 A/B 组，2021 年 6 月比各渠道申请量与贡献度；")
+    print("    B 手机银行首页广告位露出贷款产品 -> 按同等流量分 A/B 组，每日比申请转化率。")
+
+    print("\n案例2（贷款申请归因分析）3 张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

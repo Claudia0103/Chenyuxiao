@@ -1,0 +1,184 @@
+# -*- coding: utf-8 -*-
+"""
+9.1 信用卡客户画像 —— 取数环节
+================================
+复现教材《信用卡客户画像.sql》：把 4 张表（card / disp / clients / trans）
+按教材第二套代码的口径拼成一张画像宽表 Creditcard，作为 9.2 画图的数据源。
+
+变量与教材 SQL 的对应关系（这也是课件第 7 页「取数方案」的三类数据）：
+  静态数据          sex（性别，档案属性，基本不变）
+  动态数据（时点）  age（发卡时的年龄——年龄随时间变，必须卡在发卡时点取）
+                    last_days / balance（截止开卡：最后一笔交易隔了多少天、余额多少）
+  动态数据（期间）  trans_count / trans_in_amount / trans_out_amount
+                    out_ratio / out_in_ratio（发卡前一年窗口内的行为统计）
+
+运行核对基准（来自教材与配套 PPT）：
+  * var2 中间表 1175 行 —— SQL 注释原文：“数据量是 1175，而不是 892”
+  * Creditcard 宽表 892 行（卡数：普通卡 659 / 青年卡 145 / 金卡 88）
+  * 持卡类型占比 73.9% / 16.3% / 9.9%（PPT 第 3 页饼图）
+  * 各卡型女性占比 0.481 / 0.398 / 0.490（PPT 第 9 页 sex vs type）
+  * 年龄中位数 42.9 / 18.4 / 43.9（PPT 第 9 页 age | type）
+
+整段粘进 Jupyter 单个 cell 也能直接跑（__file__ 缺失时用当前目录兜底）。
+宽表默认只打印、不落盘；需要 CSV 时把最后一行的 to_csv 注释打开。
+"""
+
+import os
+import pandas as pd
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+
+# ============================ 可调参数 ============================
+DATA_DIR = (r"C:\Users\LENOVO\Desktop\CDA 教材资料2025"
+            r"\1《CDA 一级认证教材：商业数据分析》"
+            r"\第9章 用户标签体系与用户画像专题\data"
+            r"\在Mysql中创建数据\mysql_csv")   # 干净版 CSV（无表头、编码混用）
+WINDOW_DAYS = 365        # 取数窗口：365 = 教材第二套代码（一年）；180 = 第一套代码 #3
+TRANS_USECOLS = [1, 2, 3, 5, 6]   # trans 只读 account_id/date/type/amount/balance，省内存
+TRANS_NROWS = None       # 调试时可设成 200000 快速试跑，正式跑保持 None
+# ==================================================================
+
+
+def read_csv_auto(fname, columns, usecols=None, nrows=None):
+    """13 个 CSV 编码混用（部分 UTF-8、部分 GB2312）。
+    必须先试 UTF-8 再退 GB18030——反过来 GB18030 解 UTF-8 字节不报错、
+    只变乱码，会把中文静默读错。"""
+    path = os.path.join(DATA_DIR, fname)
+    last_err = None
+    for enc in ("utf-8-sig", "gb18030", "gbk", "latin-1"):
+        try:
+            kw = dict(header=None, names=columns, encoding=enc,
+                      skipinitialspace=True, nrows=nrows)
+            if usecols is not None:
+                kw["usecols"] = usecols
+            return pd.read_csv(path, **kw)
+        except UnicodeDecodeError as e:
+            last_err = e
+    raise RuntimeError("所有编码都读不了 {}: {}".format(fname, last_err))
+
+
+def load_tables():
+    """按建表脚本 1 create_table.sql 的字段顺序读 4 张表。"""
+    card = read_csv_auto("Kdd99_card.csv",
+                         ["card_id", "disp_id", "issued", "type"])
+    disp = read_csv_auto("Kdd99_disp.csv",
+                         ["disp_id", "client_id", "account_id", "disp_type"])
+    clients = read_csv_auto("Kdd99_clients.csv",
+                            ["client_id", "sex", "birth_date", "district_id"])
+    trans = read_csv_auto("Kdd99_trans.csv",
+                          ["trans_id", "account_id", "date", "type", "operation",
+                           "amount", "balance", "k_symbol", "bank", "account"],
+                          usecols=TRANS_USECOLS, nrows=TRANS_NROWS)
+    for df, cols in ((card, ["issued"]), (clients, ["birth_date"]), (trans, ["date"])):
+        for c in cols:
+            df[c] = pd.to_datetime(df[c])
+    return card, disp, clients, trans
+
+
+def build_creditcard(card, disp, clients, trans):
+    """教材 SQL 的 var1 / var2 / var3 / Creditcard 四步。"""
+    # ---- var1：性别 + 发卡时的年龄（datediff(issued, birth_date)/365）----
+    var1 = (card.merge(disp[["disp_id", "client_id", "account_id"]],
+                       on="disp_id", how="left")
+                .merge(clients[["client_id", "sex", "birth_date"]],
+                       on="client_id", how="left"))
+    var1["age"] = (var1["issued"] - var1["birth_date"]).dt.days / 365
+
+    # ---- var2_1：发卡前的全部交易，算距发卡的天数 ----
+    m = var1[["card_id", "disp_id", "account_id", "issued"]].merge(
+        trans[["account_id", "date", "type", "amount", "balance"]],
+        on="account_id", how="left")
+    pre = m[m["issued"] > m["date"]].copy()
+    pre["last_days"] = (pre["issued"] - pre["date"]).dt.days
+
+    # ---- var2：只留每张卡发卡前最后一天的交易；同一天多笔时余额取平均
+    #      （教材注释：账户最后一天常有多笔交易，中间表 1175 行 > 892 张卡）----
+    mx = pre.groupby("card_id")["date"].max().rename("max_date")
+    last_day = pre.merge(mx, left_on="card_id", right_index=True)
+    last_day = last_day[last_day["date"] == last_day["max_date"]]
+    var2 = last_day.groupby(["card_id", "disp_id", "issued"]).agg(
+        last_days=("last_days", "first"), balance=("balance", "mean")).reset_index()
+
+    # ---- var3：发卡前一年窗口内的交易统计（借=入账，贷=出账）----
+    win = pre[pre["date"] > pre["issued"] - pd.Timedelta(days=WINDOW_DAYS)]
+    g = win.groupby(["card_id", "disp_id"])
+    vin = win[win["type"] == "借"].groupby(["card_id", "disp_id"])["amount"]
+    vout = win[win["type"] == "贷"].groupby(["card_id", "disp_id"])["amount"]
+    var3 = pd.DataFrame({
+        "trans_count": g["amount"].count(),
+        "trans_in_amount": vin.sum(),
+        "trans_out_amount": vout.sum(),
+        "avg_balance": g["balance"].mean(),      # out_ratio 的分母（教材 avg(c.balance)）
+    }).fillna(0).reset_index()
+    var3["out_ratio"] = var3["trans_out_amount"] / var3["avg_balance"].replace(0, pd.NA)
+    var3["out_in_ratio"] = var3["trans_out_amount"] / var3["trans_in_amount"].replace(0, pd.NA)
+
+    # ---- Creditcard：三表关联成画像宽表 ----
+    creditcard = (var1.merge(var2[["card_id", "last_days", "balance"]],
+                             on="card_id", how="left")
+                      .merge(var3.drop(columns=["disp_id"]),
+                             on="card_id", how="left")
+                      .sort_values("card_id").reset_index(drop=True))
+    return creditcard
+
+
+def main():
+    card, disp, clients, trans = load_tables()
+    df = build_creditcard(card, disp, clients, trans)
+
+    print("载入完成：card={} disp={} clients={} trans={}".format(
+        len(card), len(disp), len(clients), len(trans)))
+
+    # ---------------- 核对（基准值见文件头注释） ----------------
+    # 中间表行数（对应 SQL 注释里的 1175）：重算一遍只留最后一天、不去重
+    m2 = df[["card_id", "account_id", "issued"]].merge(
+        trans[["account_id", "date"]], on="account_id", how="left")
+    pre2 = m2[m2["issued"] > m2["date"]]
+    mid_rows = int(pre2.merge(pre2.groupby("card_id")["date"].max().rename("mx"),
+                              left_on="card_id", right_index=True)
+                   .query("date == mx").shape[0])
+
+    checks = []
+    checks.append(("card 行数", len(card), 892))
+    checks.append(("Creditcard 行数", len(df), 892))
+    checks.append(("var2 中间表行数（教材注释 1175）", mid_rows, 1175))
+
+    pct = df["type"].value_counts(normalize=True).mul(100).round(1)
+    for t, want in (("普通卡", 73.9), ("青年卡", 16.3), ("金卡", 9.9)):
+        checks.append(("持卡类型占比 {}%".format(t), pct.get(t), want))
+
+    fem = pd.crosstab(df["type"], df["sex"], normalize="index")["女"].round(3)
+    for t, want in (("普通卡", 0.481), ("金卡", 0.398), ("青年卡", 0.490)):
+        checks.append(("女性占比 {}（sex vs type）".format(t), fem.get(t), want))
+
+    med = df.groupby("type")["age"].median().round(1)
+    for t, want in (("普通卡", 42.9), ("青年卡", 18.4), ("金卡", 43.9)):
+        checks.append(("年龄中位数 {}（age | type）".format(t), med.get(t), want))
+
+    print("\n[核对] 教材/PPT 基准 vs 本脚本：")
+    bad = 0
+    for name, got, want in checks:
+        same = (got == want) or (isinstance(got, float) and abs(got - want) < 0.05)
+        bad += (not same)
+        print("  {}  {} = {}（基准 {}）".format("OK " if same else "≠ ", name, got, want))
+    print("  共 {} 项，{} 项一致".format(len(checks), len(checks) - bad))
+
+    # ---------------- 画像宽表预览 ----------------
+    show_cols = ["card_id", "type", "sex", "age", "last_days", "balance",
+                 "trans_count", "trans_in_amount", "trans_out_amount",
+                 "out_ratio", "out_in_ratio"]
+    print("\n[Creditcard 宽表预览] 前 5 行：")
+    print(df[show_cols].head(5).to_string(index=False))
+    print("\n[宽表各变量Missing]：")
+    print(df[show_cols].isna().sum().to_string())
+
+    # 需要 CSV 时打开下面一行（输出到脚本所在目录）：
+    # df[show_cols].to_csv(os.path.join(BASE_DIR, "creditcard_画像宽表.csv"),
+    #                      index=False, encoding="utf-8-sig")
+
+
+# .py 直跑与 Jupyter 粘贴运行都直接执行
+main()

@@ -1,0 +1,209 @@
+# -*- coding: utf-8 -*-
+"""
+第13章 指标体系管理 —— 13.4 指标标准注册与落标检查
+================================================
+落标（落地标准）= 把已发布的指标标准映射到“基础数据标准（数据元）”与
+“维度定义”，并保证每个指标有加工口径（技术口径）。这是信通院白皮书
+“标准落地执行”阶段的核心动作，也与第12章 OneModel（派生指标 = 原子指标
++ 周期 + 限定 + 粒度）互为表里：这里的“关联标准”正是 OneModel 的原子指标。
+
+本脚本给一个可运行的 IndicatorStandardRegistry：
+  - 注册指标、3 类属性必填校验、编号去重、根/派生分类；
+  - 落标检查：派生/根指标须有 技术口径 与 维度，且 关联标准 必须指向
+    一个已存在的基础数据标准（否则“未落标”）；
+  - 输出落标看板图（逐指标 ✓/✗）+ 合规计数图。
+演示数据含 3 条合规、3 条不合规（故意缺关联标准 / 指向不存在标准 / 缺维度）。
+"""
+
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["font.weight"] = "normal"
+
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = os.getcwd()
+OUT = os.path.join(_HERE, "charts")
+os.makedirs(OUT, exist_ok=True)
+
+C_GREEN, C_RED, C_BLUE = "#3C8C4E", "#B5483B", "#2E5E8C"
+
+
+# ======================================================================
+# 1. 可运行：指标标准注册器 + 落标检查
+# ======================================================================
+class IndicatorStandard:
+    def __init__(self, **kw):
+        self.f = kw
+
+    def is_derived(self):
+        return self.f.get("指标类型") == "派生指标"
+
+    def short(self):
+        return f"{self.f.get('编号','?')} {self.f.get('中文名称','?')}"
+
+
+class IndicatorStandardRegistry:
+    def __init__(self, known_basic=None):
+        # known_basic: 已存在的基础数据标准中文名称集合（落标映射目标）
+        self._by_id = {}
+        self.known_basic = set(known_basic or [])
+
+    def register(self, ind: IndicatorStandard):
+        sid = ind.f.get("编号")
+        if not sid:
+            return False, "缺编号"
+        if sid in self._by_id:
+            return False, f"编号重复：{sid}"
+        self._by_id[sid] = ind
+        return True, "OK"
+
+    def landing_check(self):
+        """逐指标落标检查，返回 [(ind, [issues])]。"""
+        results = []
+        for ind in self._by_id.values():
+            f = ind.f
+            issues = []
+            if not f.get("技术口径"):
+                issues.append("缺技术口径")
+            if not f.get("维度"):
+                issues.append("缺维度")
+            ref = f.get("关联标准")
+            if not ref:
+                issues.append("缺关联标准")
+            elif self.known_basic and ref not in self.known_basic:
+                issues.append("关联标准未落标")
+            results.append((ind, issues))
+        return results
+
+    def report(self):
+        res = self.landing_check()
+        ok = sum(1 for _, iss in res if not iss)
+        bad = len(res) - ok
+        print("=" * 60)
+        print(f"落标检查：合规 {ok} 条，未落标 {bad} 条，共 {len(res)} 条")
+        print("=" * 60)
+        for ind, iss in res:
+            tag = "合规" if not iss else "未落标:" + "/".join(iss)
+            print(f"  [{ind.f.get('指标类型','?')}] {ind.short()} -> {tag}")
+        return res
+
+
+# ======================================================================
+# 2. 图1：落标合规看板（逐指标 ✓/✗）
+# ======================================================================
+def plot_landing_dashboard(results):
+    cols = ["编号", "中文名称", "类型", "关联标准有效", "有维度", "有技术口径", "落标结论"]
+    nrows = len(results) + 1
+    ncols = len(cols)
+    cw, ch = 2.3, 0.7
+    fig, ax = plt.subplots(figsize=(ncols * cw, nrows * ch + 0.6))
+    ax.set_xlim(0, ncols)
+    ax.set_ylim(0, nrows)
+    ax.axis("off")
+
+    # 表头
+    for c, name in enumerate(cols):
+        ax.add_patch(FancyBboxPatch((c, nrows - 1), 1, 1,
+                     boxstyle="square,pad=0", fc=C_BLUE, ec="white"))
+        ax.text(c + 0.5, nrows - 0.5, name, ha="center", va="center",
+                fontsize=9.5, color="white", fontweight="normal")
+
+    for i, (ind, issues) in enumerate(results):
+        r = nrows - 2 - i
+        f = ind.f
+        ref_ok = bool(f.get("关联标准")) and (
+            not any("关联标准" in x for x in issues))
+        dim_ok = bool(f.get("维度")) and "缺维度" not in issues
+        sql_ok = bool(f.get("技术口径")) and "缺技术口径" not in issues
+        conclusion = "合规" if not issues else "未落标"
+        cells = [
+            (f.get("编号", ""), "white"),
+            (f.get("中文名称", ""), "white"),
+            (f.get("指标类型", ""), "white"),
+            ("有" if ref_ok else "无", C_GREEN if ref_ok else C_RED),
+            ("有" if dim_ok else "无", C_GREEN if dim_ok else C_RED),
+            ("有" if sql_ok else "无", C_GREEN if sql_ok else C_RED),
+            (conclusion, C_GREEN if not issues else C_RED),
+        ]
+        for c, (txt, bg) in enumerate(cells):
+            ax.add_patch(FancyBboxPatch((c, r), 1, 1,
+                         boxstyle="square,pad=0", fc=bg, ec="white"))
+            tc = "white" if bg in (C_GREEN, C_RED, C_BLUE) else "#222222"
+            fs = 11 if (c in (3, 4, 5, 6)) else 9
+            ax.text(c + 0.5, r + 0.5, txt, ha="center", va="center",
+                    fontsize=fs, color=tc, fontweight="normal")
+
+    ax.set_title("指标落标合规看板：关联标准→基础数据标准 / 维度 / 技术口径",
+                 fontweight="normal", pad=10)
+    p = os.path.join(OUT, "13.4_落标合规看板.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 3. 图2：合规 vs 未落标 计数
+# ======================================================================
+def plot_compliance_summary(results):
+    ok = sum(1 for _, iss in results if not iss)
+    bad = len(results) - ok
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    bars = ax.bar(["合规", "未落标"], [ok, bad], color=[C_GREEN, C_RED])
+    ax.bar_label(bars, fontsize=12)
+    ax.set_ylabel("指标条数")
+    ax.set_title("落标结果统计", fontweight="normal", pad=10)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylim(0, max(ok, bad) + 1)
+    p = os.path.join(OUT, "13.4_落标结果统计.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 4. 主程序
+# ======================================================================
+def main():
+    # 已知基础数据标准（落标映射目标，来自第13章基础数据标准模板）
+    known = {"贷款余额", "客户号", "产品编号"}
+
+    reg = IndicatorStandardRegistry(known_basic=known)
+    demo = [
+        IndicatorStandard(编号="DZ-G-001", 中文名称="贷款余额", 指标类型="根指标",
+                          关联标准="贷款余额", 维度="分支机构", 技术口径="SELECT sum(余额)"),
+        IndicatorStandard(编号="DZ-G-014", 中文名称="各项贷款余额（表内）", 指标类型="根指标",
+                          关联标准="贷款余额", 维度="分支机构,地区,产品线",
+                          技术口径="SELECT sum(T1.XXX) FROM dw_XXX"),
+        IndicatorStandard(编号="DZ-P-121", 中文名称="不良率（表内）", 指标类型="派生指标",
+                          关联标准="贷款余额", 维度="分支机构,地区,产品线",
+                          技术口径="SELECT sum(不良) / 各项贷款余额"),
+        IndicatorStandard(编号="DZ-P-200", 中文名称="客户渗透率", 指标类型="派生指标",
+                          关联标准="", 维度="地区", 技术口径="SELECT count ... / 客户数"),  # 缺关联标准
+        IndicatorStandard(编号="DZ-P-201", 中文名称="产品收益比", 指标类型="派生指标",
+                          关联标准="不存在的标准", 维度="产品线",
+                          技术口径="SELECT 收益 / 余额"),  # 关联标准未落标
+        IndicatorStandard(编号="DZ-G-300", 中文名称="渠道交易额", 指标类型="根指标",
+                          关联标准="贷款余额", 维度="",
+                          技术口径="SELECT sum(交易额)"),  # 缺维度
+    ]
+    for ind in demo:
+        ok, msg = reg.register(ind)
+        print(f"注册 {ind.short()} -> {ok} ({msg})")
+
+    results = reg.report()
+    paths = [plot_landing_dashboard(results), plot_compliance_summary(results)]
+    print("\n图表已生成：")
+    for p in paths:
+        print("  -", p)
+    return paths
+
+
+if __name__ == "__main__" or True:
+    main()

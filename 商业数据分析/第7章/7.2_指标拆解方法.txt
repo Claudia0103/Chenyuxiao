@@ -1,0 +1,233 @@
+# 7.2_指标拆解方法.py
+# ============================================================
+# 第7章 指标体系构建方法 —— Python 复现（二）
+# 课件第 15~18 页：金字塔模型（MECE）分级下钻 + 两种指标拆解方式
+#
+#   ① 金字塔分级：北极星指标 → 一级 → 二级 → 三级（课件第 18 页「业务指标拆解示例」）
+#   ② 全链漏斗式：信用卡网申量 = 浏览人数 UV × 网申页打开率 × 提交表单率 × 成功申请率
+#                  （课件第 16 页）
+#   ③ 因子分解式：企业会员营收 = 新会员付费 + 老会员付费
+#                  新会员付费 = 页面浏览人数 × 留资率 × 转化率 × 单价（课件第 17 页）
+#
+# 项目内涵：把一个「说不清怎么达成」的大指标，拆成几个能分别负责、分别优化的小指标。
+# 全链漏斗是连乘（每一步都会漏人），因子分解是相加再连乘（先分人群，再看每条路径）。
+#
+# 【重要】教材只给了金字塔那页的示例数字（100万 / 30万人 / 10元），
+#        漏斗和因子分解的比率是演示参数，不是教材答案。全部集中在下面，自己改。
+# ============================================================
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ============================================================
+# 可调参数
+# ============================================================
+# ① 金字塔（教材第 18 页给的数）
+NORTH_STAR = 1_000_000          # 北极星：新增付费用户 100 万
+NEW_USERS = 1_000_000           # 一级：新增用户量 100 万
+CHANNEL_USERS = {"渠道1": 300_000, "渠道2": 250_000,
+                 "渠道3": 250_000, "渠道4": 200_000}   # 教材写「渠道1 30万人」
+AVG_PAY = 10                    # 三级：新用户平均付费 10 元
+
+# ② 全链漏斗（演示参数）
+UV = 100_000                    # 网申页浏览人数
+OPEN_RATE = 0.45                # 网申页打开率
+SUBMIT_RATE = 0.30              # 网申提交表单率
+SUCCESS_RATE = 0.60             # 成功申请率
+
+# ③ 因子分解（演示参数）
+NEW_PV = 200_000                # 新会员页面浏览人数
+LEAD_RATE = 0.12                # 留资率
+NEW_CONV_RATE = 0.25            # 转化率
+NEW_PRICE = 1_200               # 新会员单价
+OLD_MEMBERS = 5_000             # 老会员数
+REPURCHASE_RATE = 0.18          # 复购率
+OLD_PRICE = 1_500               # 老会员单价
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", path)
+
+
+def node(ax, x, y, w, h, text, fc, fontsize=9, tc="white"):
+    ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.01,rounding_size=0.012",
+                                facecolor=fc, edgecolor="white", linewidth=1))
+    ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
+            fontsize=fontsize, color=tc)
+
+
+def link(ax, x1, y1, x2, y2, color="#9AA5B1"):
+    ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-",
+                                 linewidth=1, color=color))
+
+
+def chart_pyramid():
+    """72a：北极星 → 一级 → 二级 → 三级，MECE 分级下钻。"""
+    fig, ax = plt.subplots(figsize=(12, 6.6))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title("金字塔模型：指标体系分级拆解（课件第 18 页）", fontsize=14)
+
+    node(ax, 0.35, 0.86, 0.30, 0.09,
+         "北极星指标：新增付费用户\n{:,.0f} 人".format(NORTH_STAR), "#1F3864", 11)
+    node(ax, 0.35, 0.68, 0.30, 0.085,
+         "一级指标：新增用户量\n{:,.0f} 人".format(NEW_USERS), "#2F5597", 10)
+    link(ax, 0.50, 0.86, 0.50, 0.765)
+
+    chs = list(CHANNEL_USERS.items())
+    w = 0.215
+    gap = 0.015
+    x0 = (1 - (len(chs) * w + (len(chs) - 1) * gap)) / 2
+    for i, (name, cnt) in enumerate(chs):
+        x = x0 + i * (w + gap)
+        node(ax, x, 0.47, w, 0.085,
+             "二级：{}\n{:,.0f} 人".format(name, cnt), "#9DC3E6", 9, "#14293F")
+        link(ax, 0.50, 0.68, x + w / 2, 0.555)
+        node(ax, x, 0.31, w, 0.085,
+             "三级：活动转化\n平均付费 {} 元".format(AVG_PAY), "#D6DEEB", 8, "#333333")
+        link(ax, x + w / 2, 0.47, x + w / 2, 0.395)
+
+    ax.text(0.5, 0.20, "横向 MECE：同一层各渠道相互独立、合计穷尽；纵向：一层层往下找责任人",
+            ha="center", fontsize=10, color="#555555")
+    ax.text(0.5, 0.13, "四渠道合计 {:,.0f} 人 = 一级指标 {:,.0f} 人；"
+            "推算 GMV = {:,.0f} × {} = {:,.0f} 元".format(
+                sum(CHANNEL_USERS.values()), NEW_USERS,
+                NORTH_STAR, AVG_PAY, NORTH_STAR * AVG_PAY),
+            ha="center", fontsize=10, color="#C00000")
+    save(fig, "72a_金字塔分级下钻.png")
+    return sum(CHANNEL_USERS.values())
+
+
+def chart_funnel():
+    """72b：全链漏斗式，连乘拆解。"""
+    steps = ["浏览人数 UV", "网申页打开", "提交表单", "成功申请\n（信用卡网申量）"]
+    rates = [1.0, OPEN_RATE, SUBMIT_RATE, SUCCESS_RATE]
+    rate_labels = ["起点", "× 打开率 {:.0%}".format(OPEN_RATE),
+                   "× 提交率 {:.0%}".format(SUBMIT_RATE),
+                   "× 成功率 {:.0%}".format(SUCCESS_RATE)]
+    vals = [UV]
+    for r in rates[1:]:
+        vals.append(vals[-1] * r)
+
+    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+    y = np.arange(len(steps))[::-1]
+    maxv = vals[0]
+    for i, (s, v, rl) in enumerate(zip(steps, vals, rate_labels)):
+        width = v / maxv
+        left = (1 - width) / 2
+        ax.barh(y[i], width, left=left, height=0.62,
+                color=["#1F3864", "#2F5597", "#9DC3E6", "#F58518"][i])
+        ax.text(0.5, y[i], "{:,.0f} 人".format(v), ha="center", va="center",
+                fontsize=12, color="white" if i < 3 else "#14293F")
+        ax.text(0.99, y[i] + 0.31, rl, ha="right", fontsize=9, color="#666666")
+        # 第一层柱占满整行，标签在柱内用白字；其余各层标签在柱外，用深字
+        ax.text(0.015, y[i], s, ha="left", va="center", fontsize=10,
+                color="white" if i == 0 else "#14293F")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.95, 3.6)
+    ax.axis("off")
+    ax.set_title("全链漏斗式拆解（课件第 16 页）：每一步都会漏人，所以是连乘", fontsize=13)
+    ax.text(0.5, -0.72,
+            "网申量 = {:,} × {:.0%} × {:.0%} × {:.0%} = {:,.0f} 笔".format(
+                UV, OPEN_RATE, SUBMIT_RATE, SUCCESS_RATE, vals[-1]),
+            ha="center", fontsize=11, color="#C00000")
+    save(fig, "72b_全链漏斗.png")
+    return vals
+
+
+def chart_factor():
+    """72c：因子分解式，先按人群加总，每条路径内部连乘。"""
+    new_rev = NEW_PV * LEAD_RATE * NEW_CONV_RATE * NEW_PRICE
+    old_rev = OLD_MEMBERS * REPURCHASE_RATE * OLD_PRICE
+    total = new_rev + old_rev
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5.2),
+                                   gridspec_kw={"width_ratios": [1, 1.15]})
+    # 左：营收构成（相加）
+    bottom = 0.0
+    for label, v, c in [("新会员付费", new_rev, "#4C78A8"),
+                        ("老会员付费", old_rev, "#54A24B")]:
+        ax1.bar(0, v, bottom=bottom, width=0.5, color=c, label=label)
+        ax1.text(0, bottom + v / 2, "{} {:,.0f}".format(label, v),
+                 ha="center", va="center", fontsize=10, color="white")
+        bottom += v
+    ax1.text(0, total * 1.03, "企业会员营收 = {:,.0f}".format(total),
+             ha="center", fontsize=11, color="#C00000")
+    ax1.set_xlim(-0.6, 0.6)
+    ax1.set_ylim(0, total * 1.15)
+    ax1.set_xticks([])
+    ax1.set_ylabel("营收（元）")
+    ax1.set_title("先按人群相加")
+    ax1.grid(axis="y", ls=":", alpha=0.5)
+
+    # 右：两条路径各自的乘法链
+    chains = [
+        ("新会员付费", ["{:,} 浏览".format(NEW_PV), "留资 {:.0%}".format(LEAD_RATE),
+                    "转化 {:.0%}".format(NEW_CONV_RATE), "单价 {:,}".format(NEW_PRICE)], new_rev),
+        ("老会员付费", ["{:,} 老会员".format(OLD_MEMBERS), "复购 {:.0%}".format(REPURCHASE_RATE),
+                   "单价 {:,}".format(OLD_PRICE)], old_rev),
+    ]
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.axis("off")
+    ax2.set_title("每条路径内部连乘", fontsize=12)
+    for r, (name, factors, val) in enumerate(chains):
+        yy = 0.72 - r * 0.42
+        n = len(factors)
+        w = 0.86 / n
+        for i, f in enumerate(factors):
+            x = 0.03 + i * (w + 0.02)
+            node(ax2, x, yy, w, 0.16, f, "#D6DEEB", 9, "#14293F")
+            if i < n - 1:
+                ax2.text(x + w + 0.01, yy + 0.08, "×", ha="center", va="center",
+                         fontsize=13, color="#666666")
+        ax2.text(0.5, yy - 0.10, "{} = {:,.0f} 元".format(name, val),
+                 ha="center", fontsize=10, color="#C00000")
+    fig.suptitle("因子分解式拆解（课件第 17 页）：先分人群相加，再逐条路径连乘", fontsize=13)
+    fig.tight_layout()
+    save(fig, "72c_因子分解.png")
+    return new_rev, old_rev, total
+
+
+def main():
+    s = chart_pyramid()
+    print("=" * 78)
+    print("[金字塔] 四渠道合计 = {:,.0f}，一级指标 = {:,.0f}，一致 = {}".format(
+        s, NEW_USERS, s == NEW_USERS))
+    print("[金字塔] 推算 GMV = {:,} × {} = {:,.0f} 元".format(
+        NORTH_STAR, AVG_PAY, NORTH_STAR * AVG_PAY))
+
+    vals = chart_funnel()
+    print("\n[全链漏斗] 各步人数:", [int(v) for v in vals])
+    print("[全链漏斗] 网申量 = {:,} × {:.0%} × {:.0%} × {:.0%} = {:,.0f}".format(
+        UV, OPEN_RATE, SUBMIT_RATE, SUCCESS_RATE, vals[-1]))
+    print("[全链漏斗] 全程转化率 = {:.2%}".format(vals[-1] / UV))
+
+    new_rev, old_rev, total = chart_factor()
+    print("\n[因子分解] 新会员付费 = {:,} × {:.0%} × {:.0%} × {:,} = {:,.0f}".format(
+        NEW_PV, LEAD_RATE, NEW_CONV_RATE, NEW_PRICE, new_rev))
+    print("[因子分解] 老会员付费 = {:,} × {:.0%} × {:,} = {:,.0f}".format(
+        OLD_MEMBERS, REPURCHASE_RATE, OLD_PRICE, old_rev))
+    print("[因子分解] 企业会员营收 = {:,.0f} + {:,.0f} = {:,.0f}".format(
+        new_rev, old_rev, total))
+    print("\n7.2 完成：金字塔分级 / 全链漏斗 / 因子分解，共 3 张图，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

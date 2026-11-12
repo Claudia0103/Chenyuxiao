@@ -1,0 +1,292 @@
+# 5.1_银行理财业务看板.py
+# ============================================================
+# 第5章 案例1：PowerBI 业务看板案例 —— 银行案例，Python 复现
+# 作业要求：Power BI 做的东西，理解项目内涵后用 Python 重写一遍
+#
+# 源数据：第5章 业务数据分析/第5章  PowerBI业务看板案例-银行案例/
+#         银行案例数据 - 学员用.xlsx
+#         含「销售数据」440 行 + 风险偏好/品类/学历 3 张维度说明表 + 业务描述
+# 参考成品：案例结果.pbix（1 个页面，6 个视觉对象）
+#
+# PBIX 里的 6 个视觉对象，逐个迁移为 Python：
+#   ① cardVisual                    MTD销售额 / MTD销售目标达成率  -> KPI 卡片
+#   ② decompositionTreeVisual       按学历/年龄/收入/性别下钻销售额 -> 4 维分组 + 自动下钻路径
+#   ③ clusteredColumnChart          「不同理财品类的销售占比」     -> 品类×风险 簇状柱
+#   ④ lineClusteredColumnComboChart「客单及期限均值分布」         -> 客单柱 + 期限均值折线（双轴）
+#   ⑤ WordCloud 插件               「选择本行的原因」             -> 词云（按出现次数定字号）
+#   ⑥ WordCloud 插件               「选择产品原因」（购买目的）    -> 词云
+#
+# 项目内涵：这张看板回答一个问题——本月 2500 万销售目标能不能完成、
+# 钱是从哪类客群和哪类理财产品来的、客户为什么选这家银行。
+# Power BI 里靠「建关系 + 写 DAX 度量值 + 拖字段」，Python 里对应
+# merge（关系）、groupby/agg（度量值）、matplotlib（视觉对象）。
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+CASE_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第5章 业务数据分析/第5章  PowerBI业务看板案例-银行案例"
+DATA_PATH = os.path.join(CASE_DIR, "银行案例数据 - 学员用.xlsx")
+
+PALETTE = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2",
+           "#EECA3B", "#B279A2", "#FF9DA6", "#9D755D", "#BAB0AC"]
+
+# 业务描述给的口径：本月目标 2500 万，本月共 31 天，数据是 29 日的时点数据。
+SALES_TARGET = 25_000_000
+DAYS_IN_MONTH = 31
+DAYS_ELAPSED = 29
+# "simple" = 销售额 / 2500 万；"pace" = 销售额 / (2500 万 × 29/31)，按时间进度折算目标。
+# 教材 PBIX 的 DataModel 用 Xpress9 压缩，度量值 DAX 读不出来，两种口径都算出来，自己按需切。
+TARGET_MODE = "simple"
+
+
+def load_data():
+    """把事实表和 3 张维度说明表拼成一张宽表，等价于 PB 里的建模关系。"""
+    fact = pd.read_excel(DATA_PATH, sheet_name="销售数据")
+    fact.columns = [str(c).strip() for c in fact.columns]
+
+    risk = pd.read_excel(DATA_PATH, sheet_name="风险偏好说明表")
+    cate = pd.read_excel(DATA_PATH, sheet_name="品类说明表")
+    edu = pd.read_excel(DATA_PATH, sheet_name="学历说明表")
+    for d in (risk, cate, edu):
+        d.columns = [str(c).strip() for c in d.columns]
+
+    df = (fact.merge(risk, on="风险编号", how="left")
+              .merge(cate, on="品类编号", how="left")
+              .merge(edu, on="学历编号", how="left"))
+    return df
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", path)
+
+
+def chart_kpi(df):
+    """① KPI 卡片：MTD销售额 + 目标达成率 + 进度条。"""
+    mtd = df["购买金额"].sum()
+    rate_simple = mtd / SALES_TARGET
+    rate_pace = mtd / (SALES_TARGET * DAYS_ELAPSED / DAYS_IN_MONTH)
+    rate = rate_simple if TARGET_MODE == "simple" else rate_pace
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 3.2))
+    for ax in (ax1, ax2):
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+        ax.add_patch(plt.Rectangle((0.02, 0.05), 0.96, 0.90, fill=False,
+                                   edgecolor="#D5DCE5", linewidth=1.2))
+
+    ax1.text(0.5, 0.76, "MTD 销售额", ha="center", fontsize=11, color="#666666")
+    ax1.text(0.5, 0.45, "{:,.2f} 万".format(mtd / 10000), ha="center",
+             fontsize=25, color="#2F5597")
+    ax1.text(0.5, 0.22, "{:,.0f} 元".format(mtd), ha="center",
+             fontsize=10, color="#888888")
+
+    ax2.text(0.5, 0.76, "MTD 销售目标达成率", ha="center", fontsize=11, color="#666666")
+    ax2.text(0.5, 0.45, "{:.2f}%".format(rate * 100), ha="center",
+             fontsize=25, color="#C00000" if rate < 1 else "#2E7D32")
+    ax2.text(0.5, 0.22, "目标 {:,.0f} 万".format(SALES_TARGET / 10000), ha="center",
+             fontsize=10, color="#888888")
+    # 进度条（坐标轴本身就是 0~1，直接用数据坐标画）
+    ax2.barh(0.10, 0.92, height=0.045, left=0.04, color="#E8E8E8")
+    ax2.barh(0.10, 0.92 * min(rate, 1.0), height=0.045, left=0.04,
+             color="#C00000" if rate < 1 else "#2E7D32")
+
+    fig.suptitle("本月理财产品销售完成情况（截至 29 日）", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+    save(fig, "51a_销售目标达成率.png")
+    return mtd, rate_simple, rate_pace
+
+
+def chart_decomposition(df):
+    """② 分解树：PB 里可交互下钻，这里把 4 个可下钻维度一次摊开，
+    并额外算一条「自动下钻」路径，说明哪层拆分最能解释销售额。"""
+    dims = ["学历名称", "年龄", "家庭年收入", "性别"]
+    titles = ["按学历", "按年龄", "按家庭年收入", "按性别"]
+    total = df["购买金额"].sum()
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    for ax, dim, t in zip(axes.ravel(), dims, titles):
+        g = df.groupby(dim)["购买金额"].sum().sort_values()
+        share = g / total * 100
+        ax.barh(share.index, share.values, color="#4C78A8")
+        for i, v in enumerate(share.values):
+            ax.text(v + 0.3, i, "{:.1f}%".format(v), va="center", fontsize=9)
+        ax.set_title(t + "（占销售额比重）", fontsize=11)
+        ax.set_xlabel("占比 %")
+        ax.set_xlim(0, max(share.values) * 1.28)
+        ax.grid(axis="x", ls=":", alpha=0.5)
+    fig.suptitle("客群分解树：四个可下钻维度", fontsize=14)
+    fig.tight_layout()
+    save(fig, "51b_客群分解.png")
+
+    # 自动下钻：每层挑「最大子组占父组金额比重最高」的维度，走 3 层
+    path, sub, used = [], df, []
+    for _ in range(3):
+        best = None
+        for dim in dims:
+            if dim in used:
+                continue
+            g = sub.groupby(dim)["购买金额"].sum().sort_values(ascending=False)
+            if len(g) < 2:
+                continue
+            score = g.iloc[0] / g.sum()
+            if best is None or score > best[0]:
+                best = (score, dim, g.index[0])
+        if best is None:
+            break
+        score, dim, grp = best
+        used.append(dim)
+        path.append("{} → {}（占本层 {:.1f}%）".format(dim, grp, score * 100))
+        sub = sub[sub[dim] == grp]
+    return path
+
+
+def chart_category_risk(df):
+    """③ 不同理财品类的销售占比：品类 × 风险偏好 的销售额簇状柱。"""
+    pt = df.pivot_table(index="品类名称", columns="风险说明",
+                        values="购买金额", aggfunc="sum", fill_value=0)
+    order = ["低风险低收益", "中风险中收益", "高风险高收益"]
+    pt = pt.reindex(columns=[c for c in order if c in pt.columns], fill_value=0)
+    pt = pt.sort_values(by=order[0], ascending=False)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    x = np.arange(len(pt.index))
+    w = 0.8 / len(pt.columns)
+    for i, col in enumerate(pt.columns):
+        ax.bar(x + (i - (len(pt.columns) - 1) / 2) * w, pt[col].values,
+               width=w, label=col, color=PALETTE[i])
+    ax.set_xticks(x)
+    ax.set_xticklabels(pt.index, rotation=25, ha="right", fontsize=9)
+    ax.set_ylabel("销售额（元）")
+    ax.set_title("不同理财品类的销售占比（按风险偏好拆分）")
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.tight_layout()
+    save(fig, "51c_品类销售构成.png")
+    return pt
+
+
+def chart_combo(df):
+    """④ 客单及期限均值分布：柱=购买金额均值，折线=期限均值，双轴。"""
+    g = df.groupby("品类名称").agg(客单=("购买金额", "mean"),
+                               期限均值=("期限", "mean")).sort_values("客单", ascending=False)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    bars = ax.bar(g.index, g["客单"].values, color="#4C78A8", label="客单价（元）")
+    for b, v in zip(bars, g["客单"].values):
+        ax.text(b.get_x() + b.get_width() / 2, v, "{:,.0f}".format(v),
+                ha="center", va="bottom", fontsize=8, rotation=45)
+    ax.set_ylabel("客单价（元）", color="#2F5597")
+    ax.set_ylim(0, g["客单"].max() * 1.28)
+    plt.setp(ax.get_xticklabels(), rotation=25, ha="right", fontsize=9)
+
+    ax2 = ax.twinx()
+    ax2.plot(g.index, g["期限均值"].values, color="#E45756", marker="o",
+             linewidth=2, label="期限均值（年）")
+    for i, v in enumerate(g["期限均值"].values):
+        ax2.text(i, v + 0.05, "{:.2f}".format(v), ha="center", fontsize=8, color="#E45756")
+    ax2.set_ylabel("期限均值（年）", color="#C00000")
+    ax2.set_ylim(0, g["期限均值"].max() * 1.5)
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    ax.set_title("客单及期限均值分布")
+    fig.tight_layout()
+    save(fig, "51d_客单与期限均值.png")
+    return g
+
+
+def draw_wordcloud(counts, title, filename, seed=7):
+    """不装 wordcloud 库，用 matplotlib 自己摆：字号按出现次数，随机撒点 + 碰撞检测。"""
+    items = sorted(counts.items(), key=lambda kv: -kv[1])
+    if not items:
+        return
+    cmax = items[0][1]
+    cmin = items[-1][1]
+
+    fig, ax = plt.subplots(figsize=(9, 4.6), dpi=150)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title(title, fontsize=14)
+    fig.canvas.draw()                       # 先渲染一次，拿到 axes 的像素尺寸
+    box = ax.get_window_extent()
+    W, H = box.width, box.height
+    dpi = fig.dpi
+
+    rng = np.random.default_rng(seed)
+    placed = []
+
+    def overlap(a, b):
+        return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
+
+    for i, (word, cnt) in enumerate(items):
+        fs = 15 + 30 * (cnt - cmin) / max(1, (cmax - cmin))   # 频次越高字越大
+        # 中文近似全角：宽 ≈ 字数 × 字号，换算成 axes 坐标（0~1）
+        tw = len(word) * fs * dpi / 72 / W
+        # 「合理安排资金、分担风险」这类长词会超出画布，按宽度等比缩字号
+        if tw > 0.88:
+            fs *= 0.88 / tw
+            tw = len(word) * fs * dpi / 72 / W
+        th = 1.25 * fs * dpi / 72 / H
+        for _ in range(200):
+            cx = rng.uniform(tw / 2 + 0.02, 1 - tw / 2 - 0.02)
+            cy = rng.uniform(th / 2 + 0.02, 1 - th / 2 - 0.02)
+            rect = (cx - tw / 2, cy - th / 2, cx + tw / 2, cy + th / 2)
+            if not any(overlap(rect, p) for p in placed):
+                placed.append(rect)
+                ax.text(cx, cy, word, fontsize=fs, ha="center", va="center",
+                        fontweight="normal", color=PALETTE[i % len(PALETTE)], alpha=0.92)
+                break
+    ax.text(0.5, 0.02, "字号 = 出现次数（共 {} 条记录）".format(sum(counts.values())),
+            ha="center", fontsize=8, color="#888888", transform=ax.transAxes)
+    save(fig, filename)
+
+
+def main():
+    df = load_data()
+    print("销售数据: {} 行，销售额合计 {:,.0f} 元".format(len(df), df["购买金额"].sum()))
+
+    mtd, r_simple, r_pace = chart_kpi(df)
+    print("MTD销售额 = {:,.0f} 元（{:,.2f} 万）".format(mtd, mtd / 10000))
+    print("达成率(直接/2500万) = {:.2f}% ；达成率(按29/31折算目标) = {:.2f}%".format(
+        r_simple * 100, r_pace * 100))
+    print("当前 TARGET_MODE = {}，图上用的是 {:.2f}%".format(
+        TARGET_MODE, (r_simple if TARGET_MODE == "simple" else r_pace) * 100))
+
+    path = chart_decomposition(df)
+    print("\n[分解树自动下钻路径]")
+    for i, p in enumerate(path, 1):
+        print("  第{}层: {}".format(i, p))
+
+    pt = chart_category_risk(df)
+    g = chart_combo(df)
+
+    draw_wordcloud(df["选择本行的原因"].value_counts().to_dict(),
+                   "选择本行的原因", "51e_选择本行原因词云.png", seed=7)
+    draw_wordcloud(df["购买目的"].value_counts().to_dict(),
+                   "选择产品原因（购买目的）", "51f_购买目的词云.png", seed=11)
+
+    print("\n[核对] 品类×风险 销售额合计 = {:,.0f} 元".format(pt.values.sum()))
+    print("[核对] 客单价最高品类 = {} ({:,.0f} 元)".format(g.index[0], g["客单"].iloc[0]))
+    print("[核对] 选择本行的原因 TOP3:", df["选择本行的原因"].value_counts().head(3).to_dict())
+    print("[核对] 购买目的 TOP3:", df["购买目的"].value_counts().head(3).to_dict())
+    print("\n案例1（银行理财业务看板）6 张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

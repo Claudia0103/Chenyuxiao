@@ -1,0 +1,309 @@
+# 12.4_业务分析模型_AIPL_RFM.py
+# ============================================================
+# 第12章 数据模型与数据建模 —— Python 复现（四）
+#
+# 素材：阿里云数据中台《零售数据模型》白皮书（扫描影印件）
+#       第 7 章“业务分析模型——7.1 消费者洞察”（P36-P40）原文整理：
+#       - 7.1.1 AIPL 模型：认知(Awareness)→兴趣(Interest)→购买(Purchase)
+#         →忠诚(Loyalty) 四层通用定义与派生指标
+#       - 7.1.2 RFM 模型：R=最近一次购买距今天数、F=过去总购买次数、
+#         M=过去总购买金额；R 值需转为倒数(1/R)比较，与各自均值比高低，
+#         分出 8 类客户
+#       - 7.1.3 会员生命周期：消费者→顾客→会员→活跃会员→沉默会员
+#         →睡眠会员→流失会员
+#
+# 复现内容：
+#   1) AIPL 四层阶梯图（定义 + 各层派生指标）
+#   2) RFM 八分类矩阵图（1/R × F × M，与白皮书 P37 分类表一致）
+#   3) RFM 可运行实战：用确定性样例交易数据计算 R/F/M → 与均值比较
+#      → 8 分类 → 分类人数条形图（数据为脚本生成，非教材数据）
+#   4) 会员生命周期七阶段流转图
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+BLUE = "#2f5597"
+PURPLE = "#8086c9"
+ORANGE = "#c05621"
+GREEN = "#2e7d32"
+RED = "#b02a37"
+GREY = "#555555"
+INK = "#333333"
+
+# ============================================================
+# 1) AIPL 模型（白皮书 7.1.1：四层通用定义）
+# ============================================================
+AIPL = [
+    ("A 认知 Awareness", "过去一段时间内，被零售\n商的广告触达的人（收到\n营销短信、领过优惠券）",
+     "广告触达次数、领券次数", RED),
+    ("I 兴趣 Interest", "广告点击、浏览品牌/店\n铺主页、品牌词搜索、加\n购收藏、进店询问试用",
+     "访问次数、收藏次数、加购次数、试用次数", ORANGE),
+    ("P 购买 Purchase", "过去一段时间内，有过\n购买行为的消费者",
+     "购买次数、购买天数", BLUE),
+    ("L 忠诚 Loyalty", "购买后有过分享、正面\n评论，或复购(二次及以\n上购买)",
+     "分享次数、正面评价次数", GREEN),
+]
+
+
+def plot_aipl():
+    fig, ax = plt.subplots(figsize=(10.5, 6.4))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 9.4)
+    ax.axis("off")
+    ax.text(7.0, 9.0, "AIPL 消费者资产模型（白皮书 7.1.1）",
+            ha="center", fontsize=13, fontweight="bold")
+    ax.text(7.0, 8.4, "四层在同一统计周期内统计、层层递进转化；"
+                      "统计周期按零售业态可长可短（家居长、快消短）",
+            ha="center", fontsize=9, color=GREY)
+
+    w = 3.2
+    for i, (t, d, m, c) in enumerate(AIPL):
+        x = 1.6 + i * w
+        h = 2.1 + i * 1.05          # 阶梯式升高
+        b = FancyBboxPatch((x, 1.6), w - 0.35, h,
+                           boxstyle="round,pad=0.05,rounding_size=0.12",
+                           fc=c, ec="none", alpha=0.88)
+        ax.add_patch(b)
+        ax.text(x + (w - 0.35) / 2, 1.6 + h - 0.42, t, ha="center",
+                fontsize=10.5, color="white", fontweight="bold")
+        ax.text(x + (w - 0.35) / 2, 1.6 + h - 0.95, d, ha="center", va="top",
+                fontsize=8, color="white", linespacing=1.5)
+        ax.text(x + (w - 0.35) / 2, 1.15, m, ha="center", fontsize=7.4,
+                color=INK)
+        if i < 3:
+            ax.add_patch(FancyArrowPatch((x + w - 0.3, 2.4), (x + w + 0.05, 2.4),
+                                         arrowstyle="-|>", mutation_scale=14,
+                                         color=GREY, lw=1.6))
+    ax.text(7.0, 0.35, "派生指标（每层可由一个或多个指标的逻辑组合定义）",
+            ha="center", fontsize=8.5, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.4_AIPL模型.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 2) RFM 八分类矩阵（白皮书 P37 分类表：1/R 倒数 × F × M 与均值比）
+# ============================================================
+RFM_CLASSES = [
+    # (类别, 1/R(倒数), F, M)  高=高于平均，低=低于平均
+    ("高价值客户", "高", "高", "高"),
+    ("重点挽留客户", "低", "高", "高"),
+    ("重点发展客户", "高", "低", "高"),
+    ("重点唤回客户", "低", "低", "高"),
+    ("一般价值客户", "高", "高", "低"),
+    ("一般保持客户", "高", "低", "低"),
+    ("一般发展客户", "低", "高", "低"),
+    ("潜在客户", "低", "低", "低"),
+]
+
+
+def plot_rfm_matrix():
+    fig, ax = plt.subplots(figsize=(9.5, 5.6))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 10)
+    ax.axis("off")
+    ax.text(5.0, 9.5, "RFM 八分类（白皮书 P37，与各自均值比较）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    cols = ["客户类别", "1/R（倒数）", "F 购买次数", "M 购买金额"]
+    col_x = [0.4, 3.4, 5.4, 7.4]
+    y0 = 8.9
+    ax.add_patch(plt.Rectangle((0.4, y0 - 0.55), 8.6, 0.6, fc=BLUE, ec="none"))
+    for cx, ct in zip(col_x, cols):
+        ax.text(cx + 0.95, y0 - 0.25, ct, ha="center",
+                fontsize=10, color="white", fontweight="bold")
+    for i, (name, r, f, m) in enumerate(RFM_CLASSES):
+        y = y0 - 0.55 - (i + 1) * 0.92
+        fc = "#fdeeee" if name.startswith("重点") else (
+            "#eef4fd" if name.startswith("高") else "#f4f4f4")
+        ax.add_patch(plt.Rectangle((0.4, y - 0.42), 8.6, 0.92, fc=fc,
+                                   ec="#cccccc", lw=0.6))
+        ax.text(1.35, y, name, ha="center", fontsize=10, color=INK)
+        for cx, v, c in zip(col_x[1:], (r, f, m),
+                            (RED if r == "高" else GREY,
+                             BLUE if f == "高" else GREY,
+                             GREEN if m == "高" else GREY)):
+            ax.text(cx + 0.95, y, v, ha="center", fontsize=10.5, color=c,
+                    fontweight="bold")
+    ax.text(5.0, 0.15, "R 值越小购买日期越近、越是活跃优质客户，"
+                       "故 R 需先转换为倒数(1/R)再与均值比较",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.4_RFM八分类矩阵.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 3) RFM 可运行实战：样例交易数据 → R/F/M → 均值 → 八分类
+# ============================================================
+def make_transactions():
+    """确定性样例交易数据：200 客户、365 天窗口内的购买记录。"""
+    rng = np.random.default_rng(1212)
+    n = 200
+    today = pd.Timestamp("2026-09-30")
+    rows = []
+    cust_id = 0
+    # 每个客户的活跃度服从 Gamma 分布 → 自然形成 RFM 分层
+    while cust_id < n:
+        cust_id += 1
+        freq = int(rng.gamma(2.2, 2.2) + 1)          # 购买次数
+        for _ in range(freq):
+            days_ago = int(rng.gamma(1.2, 90))        # 越近越密集
+            rows.append((cust_id, today - pd.Timedelta(days=min(days_ago, 364)),
+                         round(float(rng.gamma(2.0, 250)), 2)))
+    df = pd.DataFrame(rows, columns=["customer_id", "dt", "amount"])
+    return df, today
+
+
+def rfm_run(df, today):
+    g = df.groupby("customer_id")
+    rfm = pd.DataFrame({
+        "R": (today - g["dt"].max()).dt.days,          # 最近一次购买距今天数
+        "F": g["dt"].count(),                          # 过去总购买次数
+        "M": g["amount"].sum().round(0),               # 过去总购买金额
+    })
+    # R 转倒数再比较（白皮书口径）：1/R 越大越活跃
+    rfm["inv_R"] = 1.0 / rfm["R"].clip(lower=1)
+    mr, mf, mm = rfm["inv_R"].mean(), rfm["F"].mean(), rfm["M"].mean()
+
+    def cls(row):
+        hi_r = row["inv_R"] >= mr
+        hi_f = row["F"] >= mf
+        hi_m = row["M"] >= mm
+        if   hi_r and hi_f and hi_m: return "高价值客户"
+        elif not hi_r and hi_f and hi_m: return "重点挽留客户"
+        elif hi_r and not hi_f and hi_m: return "重点发展客户"
+        elif not hi_r and not hi_f and hi_m: return "重点唤回客户"
+        elif hi_r and hi_f and not hi_m: return "一般价值客户"
+        elif hi_r and not hi_f and not hi_m: return "一般保持客户"
+        elif not hi_r and hi_f and not hi_m: return "一般发展客户"
+        else: return "潜在客户"
+
+    rfm["类别"] = rfm.apply(cls, axis=1)
+    print("=" * 88)
+    print("RFM 实战：200 客户样例交易数据（种子=1212，可复现）")
+    print(f"均值参考：1/R 均值={mr:.4f}（R 均值={rfm['R'].mean():.1f} 天）"
+          f"，F 均值={mf:.1f} 次，M 均值={mm:,.0f} 元")
+    cnt = rfm["类别"].value_counts().reindex([c[0] for c in RFM_CLASSES],
+                                             fill_value=0)
+    tbl = pd.DataFrame({"客户数": cnt, "占比%": (cnt / len(rfm) * 100).round(1)})
+    print(tbl.to_string())
+    assert cnt.sum() == len(rfm), "八分类覆盖不全"
+    return rfm, cnt, (mr, mf, mm)
+
+
+def plot_rfm_result(rfm, cnt):
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 5))
+    ax = axes[0]
+    order = [c[0] for c in RFM_CLASSES]
+    vals = cnt.reindex(order)
+    colors = [RED if n.startswith("重点") else
+              GREEN if n.startswith("高价值") else "#9aa7d0" for n in order]
+    ax.barh(order[::-1], vals[::-1], color=colors[::-1], alpha=0.9)
+    for i, v in enumerate(vals[::-1]):
+        if v > 0:
+            ax.text(v + 0.5, i, str(int(v)), va="center", fontsize=9, color=GREY)
+    ax.set_title("RFM 八分类客户数（样例数据实跑结果）", fontsize=12)
+    ax.tick_params(labelsize=9)
+
+    ax = axes[1]
+    cmap = {"高价值客户": RED, "重点挽留客户": ORANGE, "重点发展客户": ORANGE,
+            "重点唤回客户": ORANGE, "一般价值客户": PURPLE,
+            "一般保持客户": PURPLE, "一般发展客户": PURPLE, "潜在客户": "#9aa7d0"}
+    for name, sub in rfm.groupby("类别"):
+        ax.scatter(sub["F"], sub["M"], s=26, alpha=0.65, color=cmap[name],
+                   label=name, edgecolors="none")
+    ax.axvline(rfm["F"].mean(), color=GREY, ls="--", lw=1)
+    ax.axhline(rfm["M"].mean(), color=GREY, ls="--", lw=1)
+    ax.set_xlabel("F 购买次数（虚线=均值）", fontsize=9.5)
+    ax.set_ylabel("M 购买金额（元）", fontsize=9.5)
+    ax.set_title("客户 F-M 分布（颜色=RFM 类别，1/R 未展示）", fontsize=12)
+    ax.legend(fontsize=7.5, loc="upper right", framealpha=0.9)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.4_RFM实战分类.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 4) 会员生命周期（白皮书 7.1.3：七阶段）
+# ============================================================
+LIFECYCLE = [
+    ("消费者", "与零售商有接触，但还没有购买记录（AIPL 认知与兴趣人群）"),
+    ("顾客", "有过购买记录的消费者"),
+    ("会员", "参与零售商会员项目的消费者"),
+    ("活跃会员", "最近一个周期内(活跃周期的定义随业务变化)有购买记录"),
+    ("沉默会员", "最近一个周期内没有购买，但前一个周期有购买记录"),
+    ("睡眠会员", "最近两个周期内没有购买，但往前两个周期有购买记录"),
+    ("流失会员", "最近四个周期内都没有购买记录"),
+]
+
+
+def plot_lifecycle():
+    fig, ax = plt.subplots(figsize=(11, 5.8))
+    ax.set_xlim(0, 15)
+    ax.set_ylim(0, 8.6)
+    ax.axis("off")
+    ax.text(7.5, 8.2, "会员生命周期模型（白皮书 7.1.3）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    colors = [RED, ORANGE, BLUE, GREEN, PURPLE, "#5c6bc0", GREY]
+    for i, (t, d) in enumerate(LIFECYCLE):
+        y = 6.95 - i * 1.0
+        b = FancyBboxPatch((2.3, y - 0.38), 3.0, 0.78,
+                           boxstyle="round,pad=0.04,rounding_size=0.14",
+                           fc=colors[i], ec="none", alpha=0.88)
+        ax.add_patch(b)
+        ax.text(3.8, y, t, ha="center", va="center", fontsize=11,
+                color="white", fontweight="bold")
+        ax.text(5.7, y, d, ha="left", va="center", fontsize=9, color=INK)
+        if i < len(LIFECYCLE) - 1:
+            ax.add_patch(FancyArrowPatch((3.8, y - 0.42), (3.8, y - 0.6),
+                                         arrowstyle="-|>", mutation_scale=12,
+                                         color=GREY, lw=1.3))
+    ax.text(1.0, 6.95, "转化\n方向", ha="center", va="center", fontsize=9,
+            color=GREY)
+    ax.text(7.5, 0.1, "各阶段的会员数指标可在分析层加工，无须生产派生指标"
+                      "（白皮书原文备注）",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.4_会员生命周期.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+if __name__ == "__main__" or True:  # 兼容 Jupyter 直接粘贴运行
+    plot_aipl()
+    plot_rfm_matrix()
+    tx, today = make_transactions()
+    print(f"样例交易数据：{len(tx)} 笔购买记录 / "
+          f"{tx['customer_id'].nunique()} 个客户，截止 {today.date()}")
+    rfm, cnt, _ = rfm_run(tx, today)
+    plot_rfm_result(rfm, cnt)
+    plot_lifecycle()
+    print("\n12.4 完成。")

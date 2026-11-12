@@ -1,0 +1,291 @@
+# 7.1_OSM与指标字典.py
+# ============================================================
+# 第7章 指标体系构建方法 —— Python 复现（一）
+# 作业要求：教材里用 Excel / PPT 讲的方法，理解项目内涵后用 Python 实现
+#
+# 素材：1、指标体系设计模板.xlsx      Step1 是待填的 OSM 空表（只有表头）
+#                                    Step2 是 12 条指标定义示例，没有任何数值
+#       指标体系设计课件.pptx        25 页方法论，讲 OSM / VEV / 金字塔 / 全链漏斗 / 因子分解
+#
+# 这一章没有原始业务数据，也没有图表，所以复现的不是「算某份数据」，
+# 而是「指标体系怎么搭」这套方法本身：
+#   Step1  OSM 模型：业务目标 O -> 行动策略 S -> 度量指标 M（课件第 20 页 GMV 例子）
+#   Step2  指标字典：把模板 Step2 的中文计算规则翻译成能跑的公式，
+#          基础指标给数、派生指标按「关联指标」自动算（拓扑排序）
+#   Step2  维度下钻：模板每个指标都写了「维度」列，演示同一指标按渠道/新老客拆开
+#
+# 【重要】教材没给任何业务数值。下面「可调参数」里的数是一组自洽的演示数据，
+#        不是教材答案。改这组数，整套指标会跟着重算。
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ============================================================
+# 可调参数：演示用数据（非教材数值），改这里就能重算整套指标
+# ============================================================
+BASE_VALUES = {
+    "注册用户数": 10000,
+    "进件用户数": 3500,
+    "30天内新客申请贷款数": 2600,
+    "审核通过用户数": 2800,
+    "系统自动审核通过用户数": 1900,
+    "人工审核通过用户数": 900,
+    "放款用户数": 2500,
+    "放款金额": 125_000_000,
+    "合同结清数": 1200,
+    "合同结清30天内再次进件数": 216,
+}
+# 按渠道的明细，合计与上面 注册用户数=10000 / 进件用户数=3500 对齐
+CHANNEL_DATA = [
+    ("信息流广告", 4200, 1300, "新客"),
+    ("应用商店", 3000, 1100, "新客"),
+    ("老客推荐", 1800, 700, "老客"),
+    ("自然流量", 1000, 400, "新客"),
+]
+
+# ------------------------------------------------------------
+# Step1：OSM 模型（课件第 20 页「以 GMV 为例搭建用户运营数据指标体系」）
+# ------------------------------------------------------------
+OSM = {
+    "目标 O": "提升用户总成交额 GMV",
+    "策略 S": {
+        "获取 Acquisition": ["多渠道投放广告", "老用户拉新奖励"],
+        "激活 Activation": ["未登录短信提醒", "登录奖励活动"],
+        "留存 Retention": ["打卡签到送礼品", "优惠及福利推送"],
+        "付费 Revenue": ["优惠券发放", "限时折扣", "支付渠道优化"],
+        "推广 Referral": ["推广奖励", "老用户拉新奖励"],
+    },
+    "度量 M": {
+        "获取 Acquisition": ["各渠道曝光量", "各渠道跳转率", "新用户数量"],
+        "激活 Activation": ["申请完成率", "日/周/月活用户数"],
+        "留存 Retention": ["留存率", "留存人数", "活跃率"],
+        "付费 Revenue": ["付费率", "人均消费", "付费额"],
+        "推广 Referral": ["推广率", "人均推广量"],
+    },
+}
+
+# ------------------------------------------------------------
+# Step2：指标字典（照抄模板 Step2 的 12 行，一列不改）
+# 列：层级 / 指标名称 / 计算规则 / 值 / 口径 / 事件 / 维度 / 类型 / 关联指标
+# ------------------------------------------------------------
+DICT_ROWS = [
+    ("目标-一级指标", "注册用户数", "注册完成客户累计", "人数", "注册成功", "注册点击完成", "渠道大类、渠道小类、时间", "基础指标", ""),
+    ("", "进件用户数", "申请贷款用户数", "人数", "申请贷款", "点击申请", "新老客、渠道、时间", "基础指标", ""),
+    ("二级指标", "30天内新客进件转化率", "注册用户30天内申请贷款数/注册用户数", "百分比", "注册时间开始30天内申请进件", "", "新老客、渠道、时间", "派生指标", "注册用户数"),
+    ("", "审核通过用户数", "风控审批通过用户数", "人数", "", "", "新老客、渠道、时间", "基础指标", ""),
+    ("其他指标（含根指标）", "审核通过率", "审核通过用户数/进件用户数", "百分比", "", "", "新老客、渠道、时间", "派生指标", "进件用户数"),
+    ("", "机器审核通过率", "系统自动审核通过用户数/进件用户数", "百分比", "", "", "新老客、渠道、时间", "派生指标", "进件用户数"),
+    ("", "人工审核通过率", "人工审核通过用户数/进件用户数", "百分比", "", "", "新老客、渠道、时间", "派生指标", "进件用户数"),
+    ("", "放款用户数", "成功放款用户数", "人数", "", "", "新老客、渠道、时间", "基础指标", ""),
+    ("", "放款金额", "成功放款金额", "金额", "", "", "新老客、渠道、时间", "基础指标", ""),
+    ("", "放款转化率", "放款用户数/审核通过用户数", "百分比", "", "", "新老客、渠道、时间", "派生指标", "审核通过用户数"),
+    ("", "放款件均", "放款金额/放款用户数", "金额", "", "", "新老客、渠道、时间", "派生指标", "放款用户数"),
+    ("", "30天内复贷转化率", "合同结清30天内再次进件数/合同结清数", "百分比", "", "", "新老客、渠道、时间", "派生指标", "合同结清数"),
+]
+DICT_COLS = ["层级", "指标名称", "计算规则", "值", "口径", "事件", "维度", "指标类型", "关联指标"]
+
+# 把中文「计算规则」翻译成能执行的公式。
+# 每项 = (依赖的指标名列表, 计算函数, 单位)
+DERIVED = {
+    "30天内新客进件转化率": (["30天内新客申请贷款数", "注册用户数"],
+                       lambda v: v["30天内新客申请贷款数"] / v["注册用户数"], "%"),
+    "审核通过率": (["审核通过用户数", "进件用户数"],
+              lambda v: v["审核通过用户数"] / v["进件用户数"], "%"),
+    "机器审核通过率": (["系统自动审核通过用户数", "进件用户数"],
+                lambda v: v["系统自动审核通过用户数"] / v["进件用户数"], "%"),
+    "人工审核通过率": (["人工审核通过用户数", "进件用户数"],
+                lambda v: v["人工审核通过用户数"] / v["进件用户数"], "%"),
+    "放款转化率": (["放款用户数", "审核通过用户数"],
+              lambda v: v["放款用户数"] / v["审核通过用户数"], "%"),
+    "放款件均": (["放款金额", "放款用户数"],
+             lambda v: v["放款金额"] / v["放款用户数"], "元"),
+    "30天内复贷转化率": (["合同结清30天内再次进件数", "合同结清数"],
+                  lambda v: v["合同结清30天内再次进件数"] / v["合同结清数"], "%"),
+}
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", path)
+
+
+def node(ax, x, y, w, h, text, fc, fontsize=9, tc="white"):
+    """画一个圆角框（自己写，不依赖 graphviz / networkx）。"""
+    ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.01,rounding_size=0.012",
+                                facecolor=fc, edgecolor="white", linewidth=1))
+    ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
+            fontsize=fontsize, color=tc, wrap=True)
+
+
+def link(ax, x1, y1, x2, y2, color="#9AA5B1"):
+    ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-",
+                                 linewidth=1, color=color,
+                                 connectionstyle="arc3,rad=0"))
+
+
+def chart_osm():
+    """71a：OSM 三层结构，O 一层、S 五个策略、M 每个策略下的度量。"""
+    fig, ax = plt.subplots(figsize=(13, 7))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title("Step1  OSM 模型：目标 → 策略 → 度量（课件第 20 页 GMV 示例）", fontsize=14)
+
+    node(ax, 0.36, 0.87, 0.28, 0.075, "O  " + OSM["目标 O"], "#1F3864", 12)
+
+    keys = list(OSM["策略 S"].keys())
+    w = 0.176
+    gap = 0.012
+    x0 = 0.028
+    for i, k in enumerate(keys):
+        x = x0 + i * (w + gap)
+        node(ax, x, 0.70, w, 0.075, "S  " + k.split()[0], "#2F5597", 10)
+        link(ax, 0.50, 0.87, x + w / 2, 0.775)
+        # 策略下的行动（灰框）和度量（浅蓝框）
+        acts = OSM["策略 S"][k]
+        mets = OSM["度量 M"][k]
+        for j, t in enumerate(acts):
+            yy = 0.60 - j * 0.048
+            node(ax, x + 0.005, yy, w - 0.01, 0.038, t, "#D6DEEB", 8, "#333333")
+            link(ax, x + w / 2, 0.70, x + w / 2, yy + 0.038, "#C7D0DE")
+        base = 0.60 - len(acts) * 0.048
+        for j, t in enumerate(mets):
+            yy = base - 0.055 - j * 0.048
+            node(ax, x + 0.005, yy, w - 0.01, 0.038, "M  " + t, "#9DC3E6", 8, "#14293F")
+            link(ax, x + w / 2, base + 0.038, x + w / 2, yy + 0.038, "#C7D0DE")
+    ax.text(0.5, 0.02, "灰框 = 行动策略 S     蓝框 = 度量指标 M", ha="center",
+            fontsize=9, color="#666666")
+    save(fig, "71a_OSM指标拆解.png")
+
+
+def compute_metrics(values):
+    """按「关联指标」依赖做拓扑排序，先算基础再算派生。"""
+    all_names = set(values) | set(DERIVED)
+    deps = {n: set() for n in all_names}
+    for name, (d, _, _) in DERIVED.items():
+        deps[name] = set(d)
+
+    order, pending = [], set(all_names)
+    while pending:
+        ready = sorted(n for n in pending if not (deps[n] & pending))
+        if not ready:
+            raise RuntimeError("指标依赖成环，剩: " + str(pending))
+        order.extend(ready)
+        pending -= set(ready)
+
+    result = dict(values)
+    for n in order:
+        if n in DERIVED:
+            result[n] = DERIVED[n][1](result)
+    return result, order
+
+
+def chart_dependency(result):
+    """71b：基础指标 → 派生指标 的依赖图。"""
+    basics = [k for k in BASE_VALUES if k not in DERIVED]
+    derived = list(DERIVED.keys())
+
+    fig, ax = plt.subplots(figsize=(11, 10))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title("Step2  指标依赖图：基础指标（左） → 派生指标（右）", fontsize=14)
+
+    hb = 0.072
+    yb = [0.90 - i * (hb + 0.018) for i in range(len(basics))]
+    hd = 0.072
+    yd = [0.90 - i * (hd + 0.045) for i in range(len(derived))]
+
+    for i, (k, y) in enumerate(zip(basics, yb)):
+        node(ax, 0.02, y, 0.30, hb, k, "#E8EEF7", 9, "#1F3864")
+    for i, (k, y) in enumerate(zip(derived, yd)):
+        node(ax, 0.62, y, 0.34, hd, k, "#F58518", 9)
+        v = result[k]
+        unit = DERIVED[k][2]
+        txt = "{:.2f}%".format(v * 100) if unit == "%" else "{:,.0f} {}".format(v, unit)
+        ax.text(0.985, y + hd / 2, txt, va="center", fontsize=9, color="#C00000")
+        for d in DERIVED[k][0]:
+            if d in basics:
+                j = basics.index(d)
+                link(ax, 0.32, yb[j] + hb / 2, 0.62, y + hd / 2)
+    save(fig, "71b_指标依赖图.png")
+
+
+def chart_dimension():
+    """71c：模板的「维度」列落到实操 —— 同一指标按渠道、按新老客下钻。"""
+    df = pd.DataFrame(CHANNEL_DATA, columns=["渠道", "注册用户数", "进件用户数", "新老客"])
+    df["进件转化率"] = df["进件用户数"] / df["注册用户数"]
+    by_type = df.groupby("新老客")[["注册用户数", "进件用户数"]].sum()
+    by_type["进件转化率"] = by_type["进件用户数"] / by_type["注册用户数"]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.6))
+    bars = ax1.bar(df["渠道"], df["进件转化率"] * 100, color="#4C78A8", width=0.6)
+    for b, v in zip(bars, df["进件转化率"] * 100):
+        ax1.text(b.get_x() + b.get_width() / 2, v + 0.5, "{:.1f}%".format(v),
+                 ha="center", fontsize=10)
+    ax1.set_ylim(0, max(df["进件转化率"] * 100) * 1.25)
+    ax1.set_ylabel("进件转化率（%）")
+    ax1.set_title("按「渠道」维度下钻")
+    ax1.grid(axis="y", ls=":", alpha=0.5)
+    plt.setp(ax1.get_xticklabels(), rotation=15, ha="right", fontsize=9)
+
+    bars = ax2.bar(by_type.index, by_type["进件转化率"] * 100,
+                   color=["#F58518", "#54A24B"], width=0.5)
+    for b, v in zip(bars, by_type["进件转化率"] * 100):
+        ax2.text(b.get_x() + b.get_width() / 2, v + 0.5, "{:.1f}%".format(v),
+                 ha="center", fontsize=10)
+    ax2.set_ylim(0, max(by_type["进件转化率"] * 100) * 1.25)
+    ax2.set_title("按「新老客」维度下钻")
+    ax2.grid(axis="y", ls=":", alpha=0.5)
+    fig.suptitle("Step2  明确分析维度：同一个指标换个维度看", fontsize=13)
+    fig.tight_layout()
+    save(fig, "71c_维度下钻.png")
+    return df, by_type
+
+
+def main():
+    chart_osm()
+
+    dic = pd.DataFrame(DICT_ROWS, columns=DICT_COLS)
+    print("=" * 78)
+    print("Step2 指标字典（照抄模板 Step2，共 {} 条）".format(len(dic)))
+    print(dic[["层级", "指标名称", "计算规则", "值", "指标类型", "关联指标"]].to_string(index=False))
+
+    result, order = compute_metrics(BASE_VALUES)
+    print("\n[拓扑排序] 计算顺序:", " → ".join(order[:8]), "...")
+    print("\n[指标结果] 基础指标 = 可调参数；派生指标 = 自动算")
+    for name, (deps, _, unit) in DERIVED.items():
+        v = result[name]
+        txt = "{:.2f}%".format(v * 100) if unit == "%" else "{:,.0f} {}".format(v, unit)
+        print("  {:<20} = {:<12}  (依赖: {})".format(name, txt, ", ".join(deps)))
+
+    chart_dependency(result)
+    df_ch, df_type = chart_dimension()
+    print("\n[核对] 渠道明细合计: 注册 {} / 进件 {}".format(
+        df_ch["注册用户数"].sum(), df_ch["进件用户数"].sum()))
+    print("[核对] 整体进件转化率 = {:.2f}%".format(
+        df_ch["进件用户数"].sum() / df_ch["注册用户数"].sum() * 100))
+    print("[核对] 机器+人工审核通过 = {} + {} = {}，等于审核通过用户数 {}".format(
+        BASE_VALUES["系统自动审核通过用户数"], BASE_VALUES["人工审核通过用户数"],
+        BASE_VALUES["系统自动审核通过用户数"] + BASE_VALUES["人工审核通过用户数"],
+        BASE_VALUES["审核通过用户数"]))
+    print("\n7.1 完成：OSM 拆解 / 指标依赖计算 / 维度下钻，共 3 张图，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

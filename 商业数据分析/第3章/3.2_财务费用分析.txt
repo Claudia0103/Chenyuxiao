@@ -1,0 +1,132 @@
+# 3.2_财务费用分析.py
+# ============================================================
+# 第3章 案例2：财务费用分析 —— Python 复现
+# 作业要求：Power BI / Excel 分析 -> 理解项目内涵 -> 用 Python 实现
+#
+# 源文件：第3章 商业数据分析框架/案例2：财务费用分析/
+#   案例2：财务费用分析-原始数据.xlsx        （外部练习数据，与下方存在版本差异）
+#   案例2：财务费用分析-完整案例.xlsx        （含参考答案：准备区/报表界面 各 3 张图）
+#
+# 说明：完整案例内部自带一份「校正后」的原始数据（差旅费6月=59900、
+#       办公用品与设备7月=110050 等），与「原始数据.xlsx」数值不同。
+#       为保证复现结果与教材参考答案的图一致，本脚本以【完整案例内部数据】为源。
+#       完整案例最终呈现 3 张图（准备区为中间过程，二者图一致），复现这 3 张：
+#           ① 总财务费用对比                  —— 柱状图（6月 vs 7月）
+#           ② 三大期间财务费用 7月较6月增长情况 —— 柱状图（环比差额）
+#           ③ 管理费用 7月环比增长分析          —— 柱状图（环比增长率%）
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# 教材完整案例路径（实际数据在桌面；Baidu 网盘路径仅供参考）
+CASE_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例2：财务费用分析"
+# CASE_DIR = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例2：财务费用分析"
+FULL_CASE = os.path.join(CASE_DIR, "案例2：财务费用分析-完整案例.xlsx")
+
+
+def load_data():
+    total = pd.read_excel(FULL_CASE, sheet_name="总费用数据-原始数据")
+    three = pd.read_excel(FULL_CASE, sheet_name="财务三大期间费用-原始数据")
+    mgmt = pd.read_excel(FULL_CASE, sheet_name="管理费用-原始数据")
+    for d in (total, three, mgmt):
+        d.columns = [str(c).strip() for c in d.columns]
+    three["期间费用项"] = three["期间费用项"].astype(str).str.strip()
+    mgmt["管理费用项"] = mgmt["管理费用项"].astype(str).str.strip()
+    return total, three, mgmt
+
+
+def wan(x, pos=None):
+    return f"{x / 1e4:.0f}万"
+
+
+def main():
+    total, three, mgmt = load_data()
+
+    # ---------- ① 总财务费用对比（柱状：6月 vs 7月）----------
+    total = total.dropna(subset=["金额"])
+    fig, ax = plt.subplots(figsize=(6, 5))
+    bars = ax.bar(total["月份"].astype(str), total["金额"],
+                  color=["#4C78A8", "#F58518"], width=0.5)
+    for b, y in zip(bars, total["金额"]):
+        ax.text(b.get_x() + b.get_width() / 2, y, f"{y / 1e4:.0f}万",
+                ha="center", va="bottom", fontsize=10)
+    ax.set_title("总财务费用对比")
+    ax.set_ylabel("金额（元）")
+    ax.yaxis.set_major_formatter(FuncFormatter(wan))
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/32a_总财务费用对比.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/32a_总财务费用对比.png")
+
+    # ---------- ② 三大期间财务费用 7月较6月增长情况（柱状：环比差额）----------
+    tp = (three.pivot_table(index="期间费用项", columns="月份",
+                            values="金额", aggfunc="sum")
+          .reindex(columns=[6, 7], fill_value=0))
+    order = ["管理费用", "财务费用", "销售费用"]
+    diff = (tp.loc[order, 7] - tp.loc[order, 6])
+    fig, ax = plt.subplots(figsize=(8, 5))
+    colors = ["#E45756" if v < 0 else "#4C78A8" for v in diff.values]
+    bars = ax.bar(diff.index, diff.values, color=colors)
+    for b, v in zip(bars, diff.values):
+        ax.text(b.get_x() + b.get_width() / 2, v,
+                f"{v:+.0f}", ha="center",
+                va="top" if v < 0 else "bottom", fontsize=9)
+    ax.axhline(0, color="gray", lw=1)
+    ax.set_title("三大期间财务费用 7月较6月增长情况")
+    ax.set_ylabel("环比差额（元）")
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/32b_三大期间费用增长.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/32b_三大期间费用增长.png")
+
+    # ---------- ③ 管理费用 7月环比增长分析（柱状：环比增长率%）----------
+    mp = (mgmt.pivot_table(index="管理费用项", columns="月份",
+                           values="金额", aggfunc="sum")
+          .reindex(columns=[6, 7], fill_value=0))
+    growth = (mp[7] - mp[6]) / mp[6].replace(0, pd.NA) * 100
+    growth = growth.fillna(0.0)
+    order_mgmt = ['办公用品与设备', '办公租金', '差旅费', '工资及福利',
+                  '培训与发展', '其他费用', '折旧与摊销', '咨询费']
+    growth = growth.loc[order_mgmt]
+    fig, ax = plt.subplots(figsize=(11, 5))
+    colors = ["#E45756" if v < 0 else "#4C78A8" for v in growth.values]
+    bars = ax.bar(growth.index, growth.values, color=colors)
+    for b, v in zip(bars, growth.values):
+        ax.text(b.get_x() + b.get_width() / 2, v,
+                f"{v:+.1f}%", ha="center",
+                va="top" if v < 0 else "bottom", fontsize=8)
+    ax.axhline(0, color="gray", lw=1)
+    ax.set_title("管理费用 7月环比增长分析")
+    ax.set_ylabel("环比增长率（%）")
+    ax.set_xticklabels(growth.index, rotation=35, ha="right", fontsize=8)
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/32c_管理费用环比增长.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/32c_管理费用环比增长.png")
+
+    # 核对：打印关键数值
+    print("\n[核对] 总财务费用: 6月={:.0f} 7月={:.0f}".format(
+        total["金额"].iloc[0], total["金额"].iloc[1]))
+    print("[核对] 三大期间费用环比差额(元):", diff.to_dict())
+    print("[核对] 管理费用环比增长(%):")
+    for k, v in growth.items():
+        print("   {}: {:.4f}".format(k, v))
+
+    print("\n案例2（财务费用分析）3 张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

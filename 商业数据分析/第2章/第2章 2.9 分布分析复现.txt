@@ -1,0 +1,89 @@
+# ===== 第2章 2.9 分布分析复现 =====
+# 原实现：Excel (2、…/data-有答案/3分布分析-参考.xlsx)
+# 迁移：Python
+# 【项目内涵理解】看单个变量的取值分布：连续变量用直方图观察集中/离散，
+#   用箱线图观察中位数、四分位与离群值。
+# 参考文件内嵌 3 张「扩展图表」(chartEx)：
+#   ① 不同时点门店客流量分布图 —— 直方图，binCount=8（8 个箱，右闭）
+#   ② 下单用户年龄分布         —— 直方图，binSize=10，underflow=20，overflow=60
+#   ③ 客单价箱线图             —— 箱线图，显示均值标记、显示离群值、exclusive 四分位
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+import openpyxl
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/3分布分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/3分布分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+wb = openpyxl.load_workbook(XLSX, data_only=True)
+ws = wb["分布分析"]
+
+def col_values(header_keyword):
+    """在工作表里找到第一个等于 header_keyword 的表头，返回其下方连续数值。"""
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            if ws.cell(r, c).value == header_keyword:
+                vals = []
+                rr = r + 1
+                while rr <= ws.max_row:
+                    v = ws.cell(rr, c).value
+                    if v is None or str(v).strip() == "":
+                        break
+                    vals.append(float(v))
+                    rr += 1
+                return vals
+    return []
+
+# ---------- 取数 ----------
+traffic = col_values("门店客流量")   # C3:C50，48 个门店客流量（小数）
+age = col_values("年龄")             # L3:L340，338 个年龄（首次命中的右块）
+price = col_values("客单价")          # U2:U339，338 个客单价
+
+print(f"【门店客流量】共 {len(traffic)} 个，范围 {min(traffic):.1f}~{max(traffic):.1f}")
+print(f"【年龄】共 {len(age)} 个，范围 {int(min(age))}~{int(max(age))}")
+print(f"【客单价】共 {len(price)} 个，均值 {np.mean(price):.2f}，中位数 {np.median(price):.1f}")
+
+# ---------- 图1：不同时点门店客流量分布图（直方图，8 箱，右闭）----------
+s = pd.Series(traffic)
+edges = np.linspace(s.min(), s.max(), 9)            # 8 个等宽箱
+cats = pd.cut(s, bins=edges, right=True, include_lowest=True)
+counts = cats.value_counts().sort_index()
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.bar([str(iv) for iv in counts.index], counts.values, color="#4C78A8", edgecolor="white")
+ax.set_title("不同时点门店客流量分布图")
+ax.set_xlabel("客流量区间"); ax.set_ylabel("频数")
+plt.xticks(rotation=30, ha="right")
+fig.savefig(f"{CHART_DIR}/29a_客流量直方图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/29a_客流量直方图.png")
+
+# ---------- 图2：下单用户年龄分布（直方图，箱宽 10，范围 20~60，右闭）----------
+age_s = pd.Series(age)
+edges2 = [20, 30, 40, 50, 60]                        # 与原图 underflow=20/overflow=60/binSize=10 一致
+cats2 = pd.cut(age_s, bins=edges2, right=True, include_lowest=True)
+counts2 = cats2.value_counts().sort_index()
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.bar([str(iv) for iv in counts2.index], counts2.values, color="#54A24B", edgecolor="white")
+ax.set_title("下单用户年龄分布"); ax.set_xlabel("年龄区间"); ax.set_ylabel("人数")
+fig.savefig(f"{CHART_DIR}/29b_年龄直方图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/29b_年龄直方图.png")
+
+# ---------- 图3：客单价箱线图（显示均值标记、显示离群值、exclusive 四分位）----------
+fig, ax = plt.subplots(figsize=(6, 5))
+ax.boxplot(price, showmeans=True,
+           meanprops=dict(marker="D", markersize=6, markerfacecolor="#E45756",
+                          markeredgecolor="#E45756"),
+           whis=1.5, widths=0.5, patch_artist=True,
+           boxprops=dict(facecolor="#4C78A8", alpha=0.5),
+           medianprops=dict(color="black"))
+ax.set_title("客单价箱线图"); ax.set_ylabel("客单价")
+ax.set_xticks([1]); ax.set_xticklabels(["客单价"])
+fig.savefig(f"{CHART_DIR}/29c_客单价箱线图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/29c_客单价箱线图.png")

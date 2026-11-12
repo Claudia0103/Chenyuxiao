@@ -1,0 +1,165 @@
+# -*- coding: utf-8 -*-
+"""
+第10章 · 使用效应分解方法做预报 —— 10.1 效应分解法（乘法模型）
+=============================================================
+教材给出的核心数据：AirPassengers（1949-01 ~ 1960-12 月度国际航空乘客数，单位千人）。
+配套文件：AirPassengers.csv（DATE/AIR/ln_AIR）、AirPassengers.xlsx、效应分解法.pbix。
+
+所谓"效应分解"，就是把一条时间序列拆成三块可解释的成分：
+    原始值 Y_t  =  趋势-循环 T_t  ×  季节效应 S_t  ×  不规则 I_t        （乘法模型）
+航空乘客量逐年增长且波动幅度随水平放大，所以必须用乘法模型（先取对数再分解等价于加法）。
+
+本脚本用经典乘法分解（classical multiplicative decomposition）复现教材方法：
+  1) 趋势-循环 T_t：12 个月居中移动平均（偶数周期用 2×12 MA 消除相位偏移）
+  2) 季节效应 S_t：各月 (Y/T) 的平均，再归一化使 12 个月均值 = 1
+  3) 不规则 I_t：Y / (T × S)，扣掉趋势和季节后剩下的随机扰动
+
+输出 4 张图（与 statsmodels 分解图同款布局）：
+  101a_效应分解四联图.png  —— 原始 / 趋势-循环 / 季节 / 不规则
+  101b_原始与趋势叠加.png   —— 原始序列 + 趋势线
+  101c_季节指数.png         —— 12 个月季节指数柱状图
+  101d_对数序列与趋势.png   —— ln_AIR 与对数趋势（对应 PBIX 第2页的 ln_AIR 视角）
+
+运行方式：
+  - 作为 .py 直接运行：python 10.1_效应分解法.py
+  - 在 Jupyter 里整段粘贴：已做 __file__ 兜底，无需改动
+"""
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---------- 路径与中文显示 ----------
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))      # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                      # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 数据源 ----------
+SRC = (r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》"
+       r"/第10章 使用效应分解方法做预报/AirPassengers.csv")
+
+PERIOD = 12   # 月度数据 → 季节周期 = 12 个月
+
+
+def save(fig, name):
+    path = os.path.join(CHART_DIR, name)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print("  已保存:", path)
+    return path
+
+
+def multiplicative_decompose(series):
+    """经典乘法分解：返回 trend / seasonal(去重对齐到每月) / irregular / 季节指数。"""
+    s = series.astype(float)
+    n = len(s)
+    # 1) 趋势-循环：居中 2×12 移动平均
+    trend = s.rolling(PERIOD, center=True).mean().rolling(2).mean()
+    # 2) 去趋势
+    detr = s / trend
+    # 3) 同月平均 → 季节指数（未归一）
+    seas_raw = detr.groupby(detr.index.month).transform("mean")
+    idx = seas_raw.groupby(seas_raw.index.month).mean()
+    idx = idx / idx.mean()                       # 归一化，使 12 个月均值 = 1
+    seasonal = pd.Series(s.index.month.map(idx), index=s.index)   # 对齐回每条记录
+    # 4) 不规则
+    irregular = pd.Series(s.values / (trend.values * seasonal.values), index=s.index)
+    return trend, seasonal, irregular, idx
+
+
+def main():
+    # ---- 读入 ----
+    df = pd.read_csv(SRC, parse_dates=["DATE"])
+    s = df.set_index("DATE")["AIR"].asfreq("MS")
+    log_s = np.log(s)
+    print("\n[数据] AirPassengers：{} ~ {}，共 {} 个月".format(
+        s.index[0].strftime("%Y-%m"), s.index[-1].strftime("%Y-%m"), len(s)))
+    print("[数据] 首值 {} 千人，末值 {} 千人，整体增长 {:.1f} 倍".format(
+        s.iloc[0], s.iloc[-1], s.iloc[-1] / s.iloc[0]))
+
+    trend, seasonal, irregular, idx = multiplicative_decompose(s)
+    log_trend = log_s.rolling(PERIOD, center=True).mean().rolling(2).mean()
+
+    # ===== 图 1：效应分解四联图 =====
+    fig, ax = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
+    ax[0].plot(s.index, s.values, color="#1F4E79", lw=1.3)
+    ax[0].set_ylabel("原始值 Y")
+    ax[0].set_title("AirPassengers 经典乘法分解（趋势 × 季节 × 不规则）", fontsize=14)
+    ax[1].plot(trend.index, trend.values, color="#C00000", lw=1.6)
+    ax[1].set_ylabel("趋势-循环 T")
+    ax[2].plot(seasonal.index, seasonal.values, color="#2E7D32", lw=1.0, marker="o", ms=2)
+    ax[2].axhline(1.0, color="#999999", ls="--", lw=0.8)
+    ax[2].set_ylabel("季节 S")
+    ax[3].plot(irregular.index, irregular.values, color="#7F7F7F", lw=0.8, marker="o", ms=2)
+    ax[3].axhline(1.0, color="#999999", ls="--", lw=0.8)
+    ax[3].set_ylabel("不规则 I")
+    ax[3].set_xlabel("年份")
+    for a in ax:
+        a.grid(True, ls=":", alpha=0.4)
+    fig.tight_layout()
+    save(fig, "101a_效应分解四联图.png")
+
+    # ===== 图 2：原始 + 趋势叠加 =====
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    ax.plot(s.index, s.values, color="#1F4E79", lw=1.1, label="原始值")
+    ax.plot(trend.index, trend.values, color="#C00000", lw=2.2, label="趋势-循环（2×12 居中MA）")
+    ax.set_title("原始序列与趋势成分叠加", fontsize=13)
+    ax.set_ylabel("千人"); ax.legend(); ax.grid(True, ls=":", alpha=0.4)
+    save(fig, "101b_原始与趋势叠加.png")
+
+    # ===== 图 3：12 个月季节指数 =====
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    months = list(range(1, 13))
+    colors = ["#C0392B" if m in (7, 8) else ("#2E7D32" if m in (11, 12, 1, 2) else "#2F5597")
+              for m in months]
+    bars = ax.bar(months, [idx[m] for m in months], color=colors)
+    ax.axhline(1.0, color="#333333", ls="--", lw=1)
+    ax.set_xticks(months)
+    ax.set_xticklabels(["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月",
+                        "9月", "10月", "11月", "12月"])
+    ax.set_ylim(0.7, 1.3)
+    ax.set_title("季节指数（乘法，归一化后均值=1）", fontsize=13)
+    ax.set_ylabel("季节指数")
+    for b, m in zip(bars, months):
+        ax.text(b.get_x() + b.get_width() / 2, idx[m] + 0.01, "{:.3f}".format(idx[m]),
+                ha="center", fontsize=8)
+    ax.grid(True, axis="y", ls=":", alpha=0.4)
+    save(fig, "101c_季节指数.png")
+
+    # ===== 图 4：对数序列与对数趋势（对应 PBIX 第2页 ln_AIR）=====
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    ax.plot(log_s.index, log_s.values, color="#1F4E79", lw=1.0, label="ln(原始值)")
+    ax.plot(log_trend.index, log_trend.values, color="#C00000", lw=2.2, label="对数趋势")
+    ax.set_title("对数序列 ln(AIR) 与对数趋势（乘法分解 → 加法分解的等价视角）", fontsize=13)
+    ax.set_ylabel("ln(千人)"); ax.legend(); ax.grid(True, ls=":", alpha=0.4)
+    save(fig, "101d_对数序列与趋势.png")
+
+    # ===== 核对：季节指数基本事实 =====
+    print("\n[核对] 12 个月季节指数（乘法，归一化）：")
+    for m in months:
+        print("    {:>2}月: {:.4f}".format(m, idx[m]))
+    peak, trough = idx.idxmax(), idx.idxmin()
+    print("[核对] 旺季月份(指数最大) = {}月 ({:.4f})，淡季月份(指数最小) = {}月 ({:.4f})".format(
+        peak, idx[peak], trough, idx[trough]))
+    print("[核对] 季节指数均值 = {:.6f}（应≈1）".format(idx.mean()))
+    assert abs(idx.mean() - 1) < 1e-9, "季节指数未归一化"
+    assert peak == 7, "旺季应为 7 月（暑期出行高峰）"
+    assert trough == 11, "淡季应为 11 月"
+    print("\n校验通过：季节指数已归一化，且旺季(7月)/淡季(11月)与业务常识一致。")
+    print("效应分解四张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()
+else:
+    # Jupyter 直接粘贴时也会执行分解 + 出图
+    main()

@@ -1,0 +1,110 @@
+# ===== 第2章 2.7 趋势分析复现 =====
+# 原实现：Excel (2、…/data-有答案/1趋势分析-参考.xlsx)，参考含 4 张图
+# 迁移：Python
+# 【项目内涵理解】把时序数据按时间维度观察指标走向，识别增长/下降/周期。
+#   参考图中包含 4 张：① 年度订单量柱状图；② 周度平均处理时长折线图；
+#   ③ 周度处理时长波动图（含平均线/预警线）；④ 月度订单量及环比增幅组合图。
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/1趋势分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/1趋势分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+raw = pd.read_excel(XLSX, sheet_name="趋势图", header=None)
+
+def block(header_keyword, ncols, max_rows=60):
+    """定位以 header_keyword 开头的表头行，向下取数据直到 B 列为空。"""
+    for r in range(raw.shape[0]):
+        if str(raw.iloc[r, 1]) == header_keyword:
+            rows = []
+            c = r + 1
+            while c < raw.shape[0] and str(raw.iloc[c, 1]) not in ("", "nan", "None"):
+                row = [raw.iloc[c, 1]] + [raw.iloc[c, j] for j in range(2, 2 + ncols)]
+                vals = [row[0]] + [pd.to_numeric(row[k], errors="coerce") for k in range(1, len(row))]
+                if pd.notna(vals[1]):
+                    rows.append(vals)
+                c += 1
+                if len(rows) >= max_rows:
+                    break
+            return rows
+    return []
+
+# ---------- 区块A：年度订单量 ----------
+yr = block("year", 1)
+year_df = pd.DataFrame(yr, columns=["year", "订单量"])
+print("【年度订单量趋势】")
+print(year_df.to_string(index=False))
+
+# ---------- 区块B：周度处理时长 ----------
+wk = block("周", 3)
+week_df = pd.DataFrame(wk, columns=["week", "平均处理时长", "平均时长", "预警值"])
+print("\n【周度平均处理时长】")
+print(week_df.to_string(index=False))
+
+# ---------- 区块C：月度订单量 + 环比 ----------
+mo = block("月", 2)
+month_df = pd.DataFrame(mo, columns=["月", "订单量", "环比增幅"])
+print("\n【月度订单量及环比】")
+print(month_df.to_string(index=False))
+
+# ---------- 图1：年度订单量柱状图 ----------
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.bar(year_df["year"].astype(int).astype(str), year_df["订单量"],
+       color="#4C78A8")
+ax.set_title("年度订单量"); ax.set_ylabel("订单量（个）")
+for x, v in zip(range(len(year_df)), year_df["订单量"]):
+    ax.text(x, v, f"{int(v)}", ha="center", va="bottom")
+fig.savefig(f"{CHART_DIR}/27a_年度订单量.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/27a_年度订单量.png")
+
+# ---------- 图2：周度平均处理时长折线图（3 系列）----------
+fig, ax = plt.subplots(figsize=(9, 4))
+xs = range(len(week_df))
+ax.plot(xs, week_df["平均处理时长"], marker="o", color="#4C78A8", label="平均处理时长")
+ax.plot(xs, week_df["平均时长"], marker="s", color="#54A24B", label="平均时长")
+ax.plot(xs, week_df["预警值"], marker="^", color="#E45756", label="预警值")
+ax.set_xticks(list(xs)); ax.set_xticklabels(week_df["week"])
+ax.set_title("周度平均处理时长折线图"); ax.set_ylabel("时长（小时）"); ax.legend()
+fig.savefig(f"{CHART_DIR}/27b_周度处理时长折线.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/27b_周度处理时长折线.png")
+
+# ---------- 图3：周度处理时长波动图（含平均线/预警线参考）----------
+fig, ax = plt.subplots(figsize=(9, 4))
+ax.plot(xs, week_df["平均处理时长"], marker="o", color="#4C78A8", lw=2,
+        label="平均处理时长")
+avg = week_df["平均时长"].iloc[0]
+warn = week_df["预警值"].iloc[0]
+ax.axhline(avg, color="#54A24B", ls="--", label=f"平均线={avg:.1f}")
+ax.axhline(warn, color="#E45756", ls="--", label=f"预警线={warn:.0f}")
+ax.set_xticks(list(xs)); ax.set_xticklabels(week_df["week"])
+ax.set_title("外呼平均处理时长周度波动图"); ax.set_ylabel("时长（小时）"); ax.legend()
+fig.savefig(f"{CHART_DIR}/27c_周度处理时长波动.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/27c_周度处理时长波动.png")
+
+# ---------- 图4：月度订单量 及 环比增幅 组合图 ----------
+fig, ax1 = plt.subplots(figsize=(10, 4.5))
+xs = range(len(month_df))
+ax1.bar(xs, month_df["订单量"], color="#4C78A8", width=0.6, label="订单量")
+ax1.set_xticks(list(xs)); ax1.set_xticklabels([f"{int(m)}月" for m in month_df["月"]])
+ax1.set_ylabel("订单量（个）")
+ax2 = ax1.twinx()
+ax2.plot(xs, month_df["环比增幅"] * 100, color="#E45756", marker="o", lw=2,
+         label="环比增幅(%)")
+ax2.axhline(0, color="grey", lw=0.8)
+ax2.set_ylabel("环比增幅(%)")
+ax1.set_title("订单量月度趋势图及环比增幅")
+l1, lb1 = ax1.get_legend_handles_labels()
+l2, lb2 = ax2.get_legend_handles_labels()
+ax1.legend(l1 + l2, lb1 + lb2, loc="upper right")
+fig.savefig(f"{CHART_DIR}/27d_月度订单量环比.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/27d_月度订单量环比.png")

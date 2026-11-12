@@ -1,0 +1,421 @@
+# 12.2_主题域与概念模型ER.py
+# ============================================================
+# 第12章 数据模型与数据建模 —— Python 复现（二）
+#
+# 素材：阿里云数据中台《零售数据模型》白皮书（扫描影印件）
+#       以下内容依据白皮书第 4 章“主题域模型”（P06）与第 5 章“概念模型”
+#       （P07-P11）原文整理，属白皮书固定内容，非推算数据。
+#
+# 复现内容：
+#   1) 零售行业 13 个主题域全景图（核心主题域：“人、货、场”）
+#   2) 概念模型 ER 图例（业务对象实体 / 业务活动实体 / 泛化实体 /
+#      一对一、一对多、多对多引用关系 / 继承关系）
+#   3) 三个典型主题域的概念模型 ER 图：公共域、商品域、交易域
+#      （实体与关系按白皮书 5.3 / 5.5 / 5.8 的 ER 图简化重绘，
+#        连线只保留主干关系，完整版见原书）
+#   4) 各域实体说明表（DataFrame 打印）
+#
+# ER 图用 matplotlib 手绘：矩形=业务对象，平行四边形=业务活动，
+# 虚线矩形=泛化实体（概念上不存在真实实例）。
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, Rectangle, Polygon, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+BLUE = "#2f5597"
+GREEN = "#2e7d32"
+ORANGE = "#c05621"
+PURPLE = "#6b46c1"
+GREY = "#555555"
+INK = "#333333"
+
+# ============================================================
+# 1) 13 个主题域（白皮书 P06，核心主题域为“人、货、场”）
+# ============================================================
+DOMAINS = [
+    # (主题域, 分组, 核心实体, 是否可选)
+    ("公共", "支撑", "地理位置、人员组织", False),
+    ("消费者(人)", "人", "会员 Member\n访客 Visitor", False),
+    ("商品(货)", "货", "商品 Merchandise\n货品 Product", False),
+    ("商家(场)", "场", "门店 Store\n站点 Site", False),
+    ("流量", "支撑", "消费者访问数据", False),
+    ("交易", "支撑", "订单、支付、退款退货", False),
+    ("履约", "支撑", "按契约配送商品", True),
+    ("服务", "支撑", "售后等数据", False),
+    ("交互", "支撑", "社媒互动、评论、分享、收藏", True),
+    ("营销", "支撑", "广告、活动、优惠券", False),
+    ("内容", "支撑", "商业软文、直播带货、物料", True),
+    ("供应链", "支撑", "采购、运输、仓储", False),
+]
+
+
+def plot_domain_map():
+    fig, ax = plt.subplots(figsize=(11, 7))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 10)
+    ax.axis("off")
+
+    def card(x, y, w, h, title, ents, color, opt=False):
+        b = FancyBboxPatch((x, y), w, h,
+                           boxstyle="round,pad=0.05,rounding_size=0.12",
+                           fc="#f4f6fc", ec=color, lw=1.4)
+        ax.add_patch(b)
+        ax.text(x + w / 2, y + h - 0.32, title + ("（可选）" if opt else ""),
+                ha="center", fontsize=10.5, color=color, fontweight="bold")
+        ax.text(x + w / 2, y + h / 2 - 0.18, ents, ha="center", va="center",
+                fontsize=8.6, color=INK)
+
+    # 三个核心主题域（人/货/场）大字突出
+    card(1.0, 6.3, 3.4, 2.0, "消费者（人）", "会员 Member\n访客 Visitor", "#b02a37")
+    card(5.3, 6.3, 3.4, 2.0, "商品（货）", "商品 Merchandise\n货品 Product", "#1a6f3c")
+    card(9.6, 6.3, 3.4, 2.0, "商家（场）", "门店 Store\n站点 Site", ORANGE)
+
+    # 其余主题域 2 行
+    rest = [(t, e, o) for (t, g, e, o) in DOMAINS if g == "支撑"]
+    for i, (t, e, o) in enumerate(rest[:5]):
+        card(0.9 + i * 2.55, 3.2, 2.35, 1.7, t, e, BLUE, o)
+    for i, (t, e, o) in enumerate(rest[5:]):
+        card(2.15 + i * 2.55, 0.9, 2.35, 1.7, t, e, BLUE, o)
+
+    ax.text(7.0, 9.4, "零售行业主题域模型：核心主题域为“人、货、场”（白皮书 P06）",
+            ha="center", fontsize=13, fontweight="bold")
+    ax.text(7.0, 8.75, "主题域划分没有客观原则，依据数据建模师的行业经验与业务理解，"
+                       "核心主题域为“人”“货”“场”",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.2_主题域全景图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 2) ER 图例（白皮书 P07 5.2 的元元素类型表）
+# ============================================================
+def _obj(ax, x, y, w=1.5, h=0.62, label="", dashed=False):
+    """业务对象实体：直角矩形（泛化实体用虚线）"""
+    r = Rectangle((x - w / 2, y - h / 2), w, h, fc="white", ec=INK, lw=1.2,
+                  ls="--" if dashed else "-")
+    ax.add_patch(r)
+    ax.text(x, y, label, ha="center", va="center", fontsize=9, color=INK)
+
+
+def _act(ax, x, y, w=1.5, h=0.62, label="", dashed=False):
+    """业务活动实体：平行四边形（泛化活动用虚线）"""
+    s = 0.22
+    poly = Polygon([(x - w / 2 + s, y + h / 2), (x + w / 2 + s, y + h / 2),
+                    (x + w / 2 - s, y - h / 2), (x - w / 2 - s, y - h / 2)],
+                   closed=True, fc="#eef1fa", ec=INK, lw=1.2,
+                   ls="--" if dashed else "-")
+    ax.add_patch(poly)
+    ax.text(x, y, label, ha="center", va="center", fontsize=9, color=INK)
+
+
+def _one(ax, x, y):
+    ax.plot([x - 0.09, x + 0.09], [y, y], color=INK, lw=1.4)
+    ax.plot([x, x], [y - 0.09, y + 0.09], color=INK, lw=1.4)  # 十字=强制1
+
+
+def _many(ax, x, y):
+    ax.plot([x, x - 0.16], [y, y + 0.1], color=INK, lw=1.2)
+    ax.plot([x, x - 0.16], [y, y - 0.1], color=INK, lw=1.2)
+    ax.plot([x, x - 0.12], [y, y], color=INK, lw=1.2)  # 鸟脚=多
+
+
+def plot_er_legend():
+    fig, ax = plt.subplots(figsize=(10.5, 5.2))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 7.4)
+    ax.axis("off")
+    ax.text(7.0, 7.0, "概念模型 ER 图例（白皮书 P07，5.2 元元素类型）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    # 左列：实体类型
+    _obj(ax, 2.0, 6.0, label="业务对象实体")
+    _act(ax, 2.0, 5.0, label="业务活动实体")
+    _obj(ax, 2.0, 4.0, label="泛化实体", dashed=True)
+    ax.text(4.0, 4.0, "虚线矩形：概念上并不存在真实实例的抽象实体\n"
+                      "（如“商家”：系统中并无真实实体表）",
+            fontsize=8.5, va="center", color=GREY)
+
+    # 右列：关系类型
+    y = 6.0
+    ax.plot([8.3, 11.2], [y, y], color=INK, lw=1.2)
+    _one(ax, 8.3, y); _one(ax, 11.2, y)
+    _obj(ax, 7.0, y, w=1.2, h=0.5, label="实体A")
+    _obj(ax, 12.5, y, w=1.2, h=0.5, label="实体B")
+    ax.text(13.4, y, "一对一引用", fontsize=9.5, va="center")
+
+    y = 5.0
+    ax.plot([8.3, 11.2], [y, y], color=INK, lw=1.2)
+    _one(ax, 8.3, y); _many(ax, 11.2, y)
+    _obj(ax, 7.0, y, w=1.2, h=0.5, label="实体A")
+    _obj(ax, 12.5, y, w=1.2, h=0.5, label="实体B")
+    ax.text(13.4, y, "一对多引用", fontsize=9.5, va="center")
+
+    y = 4.0
+    ax.plot([8.3, 11.2], [y, y], color=INK, lw=1.2)
+    _many(ax, 8.3, y); _many(ax, 11.2, y)
+    _obj(ax, 7.0, y, w=1.2, h=0.5, label="实体A")
+    _obj(ax, 12.5, y, w=1.2, h=0.5, label="实体B")
+    ax.text(13.4, y, "多对多引用", fontsize=9.5, va="center")
+
+    y = 3.0
+    ax.plot([8.3, 10.9], [y, y], color=INK, lw=1.2)
+    ax.add_patch(FancyArrowPatch((10.9, y), (11.4, y), arrowstyle="-|>",
+                                 mutation_scale=12, color=INK, lw=1.2))
+    _obj(ax, 7.0, y, w=1.2, h=0.5, label="买家")
+    _obj(ax, 12.5, y, w=1.2, h=0.5, label="用户")
+    ax.text(13.4, y, "继承（买家/会员 继承 用户）", fontsize=9.5, va="center")
+
+    # 底部注解
+    ax.text(7.0, 1.8, "实体关系有两种：\n"
+                      "a. 引用关系：一个实体是另一个实体的属性（如订单引用了买家、卖家、商品），\n"
+                      "    技术上就是 SQL 中的“关联”，分一对一/一对多/多对多；\n"
+                      "b. 继承关系：A 从属于 B 且更细化具体（买家=有过交易的用户，会员=参与会员项目的用户）。",
+            fontsize=9, color=INK, ha="center", va="center")
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.2_ER图例.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 3) 三个典型主题域的概念模型 ER 图（简化重绘）
+# ============================================================
+def _link(ax, x1, y1, x2, y2, a="1", b="1"):
+    """引用关系连线：a/b 取 '1' 或 'N'"""
+    ax.plot([x1, x2], [y1, y2], color=INK, lw=1.1)
+    if a == "1":
+        _one(ax, x1, y1)
+    else:
+        _many(ax, x1, y1)
+    if b == "1":
+        _one(ax, x2, y2)
+    else:
+        _many(ax, x2, y2)
+
+
+def plot_er_common():
+    """公共域（白皮书 5.3）：地理行政区划-地址-员工-部门；用户/收货地址；
+    供应商/仓库/门店 引用 地址"""
+    fig, ax = plt.subplots(figsize=(10.5, 6.4))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 9)
+    ax.axis("off")
+    ax.text(7.0, 8.6, "公共域概念模型 ER 图（白皮书 5.3，简化版）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    # 域边界
+    ax.add_patch(Rectangle((0.5, 1.1), 9.4, 6.6, fc="#f6f7fb", ec=GREY,
+                           lw=1.1, ls="--"))
+    ax.text(1.0, 7.35, "公共域", fontsize=10.5, color=GREY)
+
+    _obj(ax, 2.3, 6.2, label="收货地址")
+    _obj(ax, 6.2, 6.2, label="用户")
+    _link(ax, 3.05, 6.2, 5.45, 6.2, a="N", b="1")   # 收货地址 N:1 用户
+    _obj(ax, 2.6, 4.6, label="地理行政区划")
+    _obj(ax, 6.2, 4.6, label="地址")
+    _obj(ax, 2.6, 2.6, label="部门")
+    _obj(ax, 6.2, 2.6, label="员工")
+    _link(ax, 2.6, 5.05, 2.6, 3.35)  # 区划-部门(示意:归属)
+    ax.text(2.2, 4.2, "归属", fontsize=8, color=GREY, rotation=90)
+    _link(ax, 3.35, 4.6, 5.45, 4.6)  # 区划 1:N 地址
+    _link(ax, 6.2, 5.05, 6.2, 3.35)  # 地址 1:N 员工
+    _link(ax, 3.35, 2.6, 5.45, 2.6, a="1", b="N")  # 部门 1:N 员工
+
+    # 域外：供应商/仓库/门店 引用 地址（N:1）
+    _obj(ax, 12.2, 6.4, label="供应商")
+    _obj(ax, 12.2, 4.6, label="仓库")
+    _obj(ax, 12.2, 2.8, label="门店")
+    ax.plot([7.0, 10.6], [4.6, 4.6], color=INK, lw=1.1)      # 地址右出主干
+    for yy in (6.4, 4.6, 2.8):
+        ax.plot([10.6, 11.45], [4.6, yy], color=INK, lw=1.1)
+        _many(ax, 11.45, yy)
+    _one(ax, 7.0, 4.6)
+    ax.text(11.0, 1.95, "供应商/仓库/门店 引用地址（N:1）",
+            fontsize=8.5, color=GREY)
+
+    ax.text(7.0, 0.5, "地址=某个人或商业实体(门店、仓库)的具体地理位置；"
+                      "地理行政区划与员工均为树状层级结构",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.2_公共域ER图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+def plot_er_product():
+    """商品域（白皮书 5.5）：SPU-商品-SKU 三层 + 属性/品牌/类目"""
+    fig, ax = plt.subplots(figsize=(10.5, 6.8))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 9.6)
+    ax.axis("off")
+    ax.text(7.0, 9.2, "商品域概念模型 ER 图（白皮书 5.5，简化版）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    ax.add_patch(Rectangle((2.6, 1.9), 8.8, 6.3, fc="#f6f7fb", ec=GREY,
+                           lw=1.1, ls="--"))
+    ax.text(3.1, 7.85, "商品域", fontsize=10.5, color=GREY)
+
+    _obj(ax, 4.6, 7.0, label="属性")
+    _obj(ax, 4.6, 5.9, label="属性值")
+    _obj(ax, 7.0, 6.6, label="SPU")
+    _obj(ax, 9.6, 7.0, label="类目")
+    _obj(ax, 9.6, 5.9, label="品牌")
+    _obj(ax, 7.0, 5.0, label="商品")
+    _obj(ax, 9.6, 4.2, label="商品价格")
+    _obj(ax, 7.0, 3.4, label="SKU")
+    _obj(ax, 12.2, 5.0, label="店铺")
+    _obj(ax, 12.2, 3.4, label="货品")
+
+    _link(ax, 5.35, 7.0, 6.4, 6.75, a="N", b="1")   # 属性-SPU
+    _link(ax, 5.35, 5.9, 6.4, 6.45, a="N", b="1")   # 属性值-SPU
+    _link(ax, 7.75, 6.8, 8.85, 7.0, a="N", b="1")   # SPU-类目
+    _link(ax, 7.75, 6.5, 8.9, 6.05, a="N", b="1")   # SPU-品牌
+    _link(ax, 7.0, 6.25, 7.0, 5.35, a="1", b="N")   # SPU 1:N 商品
+    _link(ax, 7.35, 4.75, 8.85, 4.3, a="1", b="N")  # 商品 1:N 价格
+    _link(ax, 7.0, 4.65, 7.0, 3.75, a="1", b="N")   # 商品 1:N SKU
+    _link(ax, 7.75, 5.0, 11.45, 5.0, a="N", b="1")  # 商品-店铺
+    _link(ax, 7.75, 3.4, 11.45, 3.4, a="N", b="1")  # SKU-货品
+
+    # 业务活动（域外）：浏览/收藏/分享 → 商品
+    _act(ax, 2.2, 6.6, label="浏览")
+    _act(ax, 2.2, 5.6, label="收藏")
+    _act(ax, 2.2, 4.6, label="分享")
+    for yy in (6.6, 5.6, 4.6):
+        ax.plot([2.95, 6.25], [yy, 5.0], color=INK, lw=1.0)
+        _many(ax, 2.95, yy); _one(ax, 6.25, yy)
+    # 活动 → SKU（N:1）
+    _act(ax, 4.6, 2.0, label="销售")
+    _act(ax, 7.0, 2.0, label="销退")
+    _act(ax, 9.4, 2.0, label="配送")
+    for xx, x2 in ((4.85, 6.75), (7.0, 7.0), (9.15, 7.25)):
+        ax.plot([xx, x2], [2.31, 3.09], color=INK, lw=1.0)
+        _many(ax, xx, 2.31)
+        _one(ax, x2, 3.09)
+
+    ax.text(7.0, 0.85,
+            "SPU=标准化产品单元(信息聚合最小单位，如 iPhone 11Pro)；"
+            "商品=消费者接触到的可售品(类目+SPU)；\n"
+            "SKU=库存保有单元(所有属性值完全相同，如 A 商家 iPhone 11Pro 白色256G国行)",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.2_商品域ER图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+def plot_er_trade():
+    """交易域（白皮书 5.8）：销售(电商/POS)-支付-销退"""
+    fig, ax = plt.subplots(figsize=(10.5, 6.8))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 9.6)
+    ax.axis("off")
+    ax.text(7.0, 9.2, "交易域概念模型 ER 图（白皮书 5.8，简化版）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    ax.add_patch(Rectangle((2.4, 1.7), 9.2, 6.1, fc="#f6f7fb", ec=GREY,
+                           lw=1.1, ls="--"))
+    ax.text(2.9, 7.5, "交易域", fontsize=10.5, color=GREY)
+
+    _obj(ax, 4.0, 8.0, label="用户")
+    _obj(ax, 10.0, 8.0, label="商家", dashed=True)
+    _obj(ax, 2.2, 6.4, label="支付方式")
+    _obj(ax, 2.2, 4.9, label="支付币种")
+    _act(ax, 4.0, 5.6, label="支付")
+    _act(ax, 7.0, 5.6, label="销售")
+    _act(ax, 10.0, 5.6, label="销退")
+    _act(ax, 4.0, 3.3, label="电商销售", dashed=True)
+    _act(ax, 10.0, 3.3, label="POS销售", dashed=True)
+    _obj(ax, 4.0, 2.0, label="电商", dashed=True)
+    _obj(ax, 10.0, 2.0, label="门店", dashed=True)
+    _obj(ax, 12.3, 4.0, label="SKU")
+    _obj(ax, 7.0, 1.35, label="市场", dashed=True)
+
+    _link(ax, 4.6, 7.65, 5.9, 6.0, a="N", b="1")    # 用户-销售
+    _link(ax, 4.55, 5.6, 6.25, 5.6, a="N", b="1")   # 支付-销售
+    _link(ax, 7.75, 5.6, 9.25, 5.6, a="1", b="N")   # 销售 1:N 销退
+    _link(ax, 9.45, 7.65, 9.9, 6.0, a="N", b="1")   # 商家-销退
+    _link(ax, 2.95, 6.4, 3.3, 5.75, a="N", b="1")   # 支付方式-支付
+    _link(ax, 2.95, 4.9, 3.3, 5.45, a="N", b="1")   # 支付币种-支付
+    _link(ax, 4.0, 5.25, 4.0, 3.62, a="1", b="N")   # 销售 1:N 电商销售
+    _link(ax, 9.0, 5.45, 9.9, 3.62, a="1", b="N")   # 销退 1:N POS销售
+    _link(ax, 4.0, 2.95, 4.0, 2.35, a="N", b="1")   # 电商销售-电商
+    _link(ax, 10.0, 2.95, 10.0, 2.35, a="N", b="1") # POS销售-门店
+    _link(ax, 10.75, 5.4, 12.3, 4.35, a="N", b="1") # 销退-SKU
+    _link(ax, 6.6, 1.6, 4.7, 1.9, a="1", b="N")     # 市场-电商
+    _link(ax, 7.4, 1.6, 9.3, 1.9, a="1", b="N")     # 市场-门店
+
+    ax.text(7.0, 0.35,
+            "销售=用户(买方)与商家(卖方)在市场中达成交易契约的活动；"
+            "电商销售分多阶段，POS 销售立即完成；\n"
+            "销退=用户退还商品并要求退回货款(逆向支付)的活动",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.2_交易域ER图.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 4) 实体说明表（白皮书 P09-P11 的三张表合并节选）
+# ============================================================
+def demo_entities():
+    rows = [
+        ("公共域", "地理行政区划", "业务对象", "国家行政部门划定的地区划，树状层级结构"),
+        ("公共域", "地址", "业务对象", "某个人或商业实体(门店、仓库)的具体地理位置"),
+        ("公共域", "部门 / 员工", "业务对象", "零售商的组织架构 / 所雇用的人，树状层级结构"),
+        ("消费者域", "用户", "业务对象", "零售商的顾客"),
+        ("消费者域", "会员", "业务对象", "加入会员项目的用户，是用户的子集（继承用户）"),
+        ("消费者域", "账户 / 账户变动", "对象/活动", "会员个人资产户头 / 账户内个人资产的增减"),
+        ("商品域", "SPU", "业务对象", "标准化产品单元，商品信息聚合的最小单位"),
+        ("商品域", "商品", "业务对象", "消费者接触到的可售品：类目+SPU=商品"),
+        ("商品域", "SKU", "业务对象", "库存保有单元，所有属性值完全相同的商品"),
+        ("商品域", "属性 / 属性值", "业务对象", "商品某方面特征 / 属性的具体取值(品牌是属性值的集合)"),
+        ("商家域", "商家 / 市场", "泛化对象", "零售商自身 / 销售渠道，系统中并无真实实体"),
+        ("商家域", "店铺 / 自营电商 / 线上三方店铺", "对象/泛化", "线下实体店铺、自营线上电商、第三方平台店铺"),
+        ("流量域", "事件(浏览/点击/搜索/曝光)", "业务活动", "访客在市场中的交互活动，来源枚举型"),
+        ("交易域", "销售", "业务活动", "用户(买方)与商家(卖方)在市场中达成交易契约的活动"),
+        ("交易域", "支付 / 支付方式 / 支付币种", "活动/对象", "资金从用户侧转移到商家侧的活动及其约束"),
+        ("交易域", "销退", "业务活动", "退还商品并要求退回货款(全部或部分)的逆向支付"),
+    ]
+    df = pd.DataFrame(rows, columns=["主题域", "实体", "实体类型", "说明"])
+    print("=" * 100)
+    print("各主题域核心实体说明（节选自白皮书 P08-P11 实体表）")
+    print("=" * 100)
+    print(df.to_string(index=False))
+    print(f"\n共 {len(df)} 条核心实体。完整实体清单见白皮书 5.3-5.8 节。")
+    return df
+
+
+# ============================================================
+if __name__ == "__main__" or True:  # 兼容 Jupyter 直接粘贴运行
+    plot_domain_map()
+    plot_er_legend()
+    plot_er_common()
+    plot_er_product()
+    plot_er_trade()
+    demo_entities()
+    print("\n12.2 完成。")

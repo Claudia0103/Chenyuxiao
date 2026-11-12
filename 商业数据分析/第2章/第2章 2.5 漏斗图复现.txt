@@ -1,0 +1,61 @@
+# ===== 第2章 2.5 漏斗图复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/2-1漏斗图-参考.xlsx)
+# 迁移：Python
+# 【项目内涵理解】
+#   漏斗图展示用户在各阶段（潜在→接触→意向→…）的逐层转化：
+#     转化率 = 本阶段用户数 / 上一阶段用户数
+#     总体转化率 = 本阶段用户数 / 首个阶段用户数
+#   参考文件含 2 个可视化：① 销售漏斗图（各阶段用户数柱状图）；② 转化漏斗（漏斗形状主图）。
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/2-1漏斗图-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/2-1漏斗图-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ① 读漏斗数据（表头在第3行）
+df = pd.read_excel(XLSX, sheet_name="Sheet1", header=2)
+df = df[["阶段", "用户数", "转化率", "总体转化率"]].dropna(subset=["阶段"])
+df["阶段"] = df["阶段"].astype(str).str.strip()
+df = df[df["阶段"] != ""]
+df["用户数"] = df["用户数"].astype(float)
+df["转化率"] = df["转化率"].astype(float)
+df["总体转化率"] = df["总体转化率"].astype(float)
+
+print("【漏斗转化】")
+print(df.to_string(index=False))
+
+stages = df["阶段"].tolist()
+vals = df["用户数"].tolist()
+maxv = max(vals)
+
+# ---------- 图1：销售漏斗图（各阶段用户数柱状图，对应参考 chart1 bar）----------
+fig, ax = plt.subplots(figsize=(8, 5))
+x = range(len(stages))
+bars = ax.bar(x, vals, color="#4C78A8", width=0.6)
+ax.set_ylabel("用户数"); ax.set_xticks(list(x)); ax.set_xticklabels(stages)
+for i, v in enumerate(vals):
+    ax.text(i, v, f"{int(v)}", ha="center", va="bottom")
+ax.set_title("销售漏斗图")
+fig.savefig(f"{CHART_DIR}/25a_销售漏斗图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/25a_销售漏斗图.png")
+
+# ---------- 图2：转化漏斗（漏斗形状主图，对应参考 chartEx 漏斗图）----------
+fig, ax = plt.subplots(figsize=(8, 6))
+for i, (st, v) in enumerate(zip(stages, vals)):
+    y = len(stages) - 1 - i
+    left = (maxv - v) / 2
+    ax.barh(y, v, left=left, height=0.7, color="#4C78A8", edgecolor="white")
+    ax.text(maxv / 2, y, f"{st}  {int(v)}  ({v / maxv * 100:.0f}%)",
+            ha="center", va="center", color="white", fontsize=10)
+ax.set_yticks([]); ax.set_xlim(0, maxv)
+ax.set_title("转化漏斗")
+ax.spines[["top", "right", "left"]].set_visible(False)
+fig.savefig(f"{CHART_DIR}/25b_转化漏斗.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/25b_转化漏斗.png")

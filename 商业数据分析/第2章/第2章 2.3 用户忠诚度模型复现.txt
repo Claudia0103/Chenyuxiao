@@ -1,0 +1,58 @@
+# ===== 第2章 2.3 用户忠诚度模型复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/1-3用户忠诚度模型-参考.xlsx)
+# 迁移：Python (pandas)
+# 【项目内涵理解】
+#   以"最近13周"为界(2020-10-02)划分用户忠诚状态：
+#     潜在用户 = 界前消费次数(订单数)为0 且 界后消费次数恰好为1（刚唤醒）
+#     易流失用户 = 界后消费次数为0（沉寂）
+#     正常用户 = 其余（活跃）
+#   消费次数 = distinctcount(订单编号)（与 RFM 一致）
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-3用户忠诚度模型-参考.xlsx"
+CUT = pd.Timestamp("2020-10-02")     # 最近13周分界日
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# ① 读销售流水
+s = pd.read_excel(XLSX, sheet_name="销售流水表", header=0)
+s.columns = s.columns.str.strip()
+s["消费日期"] = pd.to_datetime(s["消费日期"]).dt.normalize()
+
+# ② 按会员编号、按界前/界后计算 distinct 订单数
+before = s[s["消费日期"] <  CUT].groupby("会员编号")["订单编号"].nunique()
+after  = s[s["消费日期"] >= CUT].groupby("会员编号")["订单编号"].nunique()
+m = pd.concat([before.rename("前次数"), after.rename("后次数")], axis=1).fillna(0)
+
+# ③ 分类
+def classify(r):
+    if r["前次数"] == 0 and r["后次数"] == 1: return "潜在用户"
+    if r["后次数"] == 0:                       return "易流失用户"
+    return "正常用户"
+m["用户类别"] = m.apply(classify, axis=1)
+
+# ④ 输出分布
+print("【用户类别分布】(参考: 易流失275, 潜在10)")
+print(m["用户类别"].value_counts().to_string())
+
+# ⑤ 各类用户的消费额/消费次数对比（维度=会员编号）
+amt = s.groupby("会员编号")["消费金额"].sum()
+m = m.join(amt.rename("累计消费额"))
+print("\n【各类平均消费额 / 平均订单数】")
+summary = m.groupby("用户类别").agg(用户数=("用户类别","size"),
+                                    平均消费额=("累计消费额","mean"),
+                                    平均订单数=("后次数","mean"))
+print(summary.round(1).to_string())
+
+# ⑥ 可视化
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+vc = m["用户类别"].value_counts()
+fig, ax = plt.subplots(figsize=(6, 5))
+ax.pie(vc.values, labels=vc.index, autopct="%.1f%%", startangle=90)
+ax.set_title("用户忠诚度分布（潜在 / 易流失 / 正常）")
+fig.savefig(f"{CHART_DIR}/23_用户忠诚度.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/23_用户忠诚度.png")

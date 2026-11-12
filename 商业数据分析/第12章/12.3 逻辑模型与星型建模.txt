@@ -1,0 +1,328 @@
+# 12.3_逻辑模型与星型建模.py
+# ============================================================
+# 第12章 数据模型与数据建模 —— Python 复现（三）
+#
+# 素材：阿里云数据中台《零售数据模型》白皮书（扫描影印件）
+#       逻辑模型章节（6.1/6.2/6.6）的表设计依据白皮书原文整理：
+#       - 业务对象 → dim_ 开头的“维度逻辑表”，业务活动 → fct_ 开头的
+#         “事实逻辑表”（DataPhin 体系，数据类型用 MySQL 类型体系）
+#       - 6.2.1 客户 dim_customer：gender(0未知/1女/2男)、
+#         status(-1已注销/1申请中/2正常) 等字段
+#       - 6.6 交易域：销售主订单(channel_type/store_id/total_amount/
+#         status -1已取消/1新建/2已支付/3已发货/4确认收货)、
+#         销售子订单(order_id/product_id/sku_id/price/quantity)
+#
+# 复现内容（本章“落地成库”的部分，与第 8 章 SQL 复现呼应）：
+#   1) 把交易域逻辑模型落成 sqlite3 内存库的星型模型：
+#      事实表 fct_sales(销售子订单粒度) + 维度表
+#      dim_customer / dim_product / dim_store / dim_date
+#   2) 生成确定性样例数据（numpy 固定种子，可复现）
+#   3) 星型模型结构图 + 3 个典型分析 SQL（门店销售、渠道对比、会员复购）
+#
+# 表结构以白皮书字段为基准，样例数据为本脚本生成的演示数据（非教材数据）。
+# ============================================================
+
+import os
+import sqlite3
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    BASE_DIR = os.getcwd()
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+BLUE = "#2f5597"
+PURPLE = "#8086c9"
+ORANGE = "#c05621"
+GREEN = "#2e7d32"
+GREY = "#555555"
+
+# ============================================================
+# 1) 建库：交易域星型模型（字段名对齐白皮书 6.2/6.6 的逻辑模型）
+# ============================================================
+DDL = """
+-- 维度：客户（白皮书 6.2.1，节选核心字段）
+CREATE TABLE dim_customer (
+    id          INTEGER PRIMARY KEY,     -- 客户 ID
+    name        TEXT    NOT NULL,        -- 真实姓名(演示用化名)
+    gender      INTEGER NOT NULL,        -- 0未知/1女/2男
+    reg_time    TEXT    NOT NULL,        -- 注册时间
+    is_member   INTEGER NOT NULL,        -- 是否会员 1/0（会员继承用户）
+    status      INTEGER NOT NULL         -- -1已注销/1申请中/2正常
+);
+-- 维度：商品（商品域：SPU/商品/SKU 三层在逻辑表中合一）
+CREATE TABLE dim_product (
+    sku_id      INTEGER PRIMARY KEY,     -- SKU ID
+    spu_name    TEXT    NOT NULL,        -- SPU 名称(如 iPhone 11Pro)
+    category    TEXT    NOT NULL,        -- 类目
+    brand       TEXT    NOT NULL,        -- 品牌
+    price       REAL    NOT NULL         -- 单价(元)
+);
+-- 维度：门店（商家域）
+CREATE TABLE dim_store (
+    store_id    INTEGER PRIMARY KEY,
+    store_name  TEXT    NOT NULL,
+    city        TEXT    NOT NULL,
+    channel_type INTEGER NOT NULL       -- 1线下门店/2线上电商（演示口径）
+);
+-- 维度：日期
+CREATE TABLE dim_date (
+    date_key    TEXT    PRIMARY KEY,     -- YYYYMMDD
+    dt          TEXT    NOT NULL,
+    ym          TEXT    NOT NULL,
+    is_weekend  INTEGER NOT NULL
+);
+-- 事实：销售子订单（白皮书 6.6.2 销售子订单 + 主订单状态，粒度=子订单行）
+CREATE TABLE fct_sales (
+    id          INTEGER PRIMARY KEY,     -- 子订单 ID
+    order_id    INTEGER NOT NULL,        -- 主订单 ID
+    customer_id INTEGER NOT NULL,        -- 客户 ID → dim_customer
+    sku_id      INTEGER NOT NULL,        -- SKU ID  → dim_product
+    store_id    INTEGER NOT NULL,        -- 门店 ID → dim_store
+    date_key    TEXT    NOT NULL,        -- 日期    → dim_date
+    price       REAL    NOT NULL,        -- 单价(分→元，演示口径)
+    quantity    INTEGER NOT NULL,        -- 商品数量
+    total_amount REAL   NOT NULL,        -- 总金额=单价*数量
+    discount_amount REAL NOT NULL,       -- 折扣金额
+    status      INTEGER NOT NULL         -- 主订单状态: -1已取消/1新建/2已支付/3已发货/4确认收货
+);
+"""
+
+
+def build_db():
+    """建库 + 生成确定性样例数据。"""
+    rng = np.random.default_rng(2026)  # 固定种子，结果可复现
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(DDL)
+
+    # ---- dim_customer：200 客户，60% 会员 ----
+    n_cust = 200
+    genders = rng.choice([0, 1, 2], n_cust, p=[0.05, 0.52, 0.43])
+    members = rng.choice([1, 0], n_cust, p=[0.6, 0.4])
+    cust_rows = []
+    for i in range(n_cust):
+        reg = pd.Timestamp("2025-01-01") + pd.Timedelta(
+            days=int(rng.integers(0, 300)))
+        cust_rows.append((i + 1, f"客户{i+1:03d}", int(genders[i]),
+                          reg.strftime("%Y-%m-%d"), int(members[i]),
+                          2 if rng.random() > 0.02 else -1))
+    conn.executemany("INSERT INTO dim_customer VALUES (?,?,?,?,?,?)", cust_rows)
+
+    # ---- dim_product：6 个 SPU × 属性组合成 30 个 SKU ----
+    spu_list = [("iPhone 15", "手机", "Apple", 5999),
+                ("华为 Mate60", "手机", "华为", 5499),
+                ("小米电视EA", "电视", "小米", 1899),
+                ("优衣库羽绒", "服饰", "优衣库", 599),
+                ("农夫山泉箱装", "食品", "农夫山泉", 39),
+                ("乐高积木套装", "玩具", "乐高", 899)]
+    variants = [("白色", 1.0), ("黑色", 1.0), ("256G升级", 1.2), ("基础款", 0.85), ("礼盒装", 1.15)]
+    prod_rows, sku_id = [], 0
+    for name, cat, brand, base in spu_list:
+        for v, mult in variants:
+            sku_id += 1
+            prod_rows.append((sku_id, f"{name} {v}", cat, brand,
+                              round(base * mult, 2)))
+    conn.executemany("INSERT INTO dim_product VALUES (?,?,?,?,?)", prod_rows)
+
+    # ---- dim_store：5 门店 ----
+    stores = [(1, "西湖旗舰店", "杭州", 1), (2, "滨江店", "杭州", 1),
+              (3, "南京西路店", "上海", 1), (4, "自营电商", "线上", 2),
+              (5, "三方平台店", "线上", 2)]
+    conn.executemany("INSERT INTO dim_store VALUES (?,?,?,?)", stores)
+
+    # ---- dim_date：2025-07-01 ~ 2025-09-30 共 92 天 ----
+    dates = pd.date_range("2025-07-01", "2025-09-30", freq="D")
+    date_rows = [(d.strftime("%Y%m%d"), d.strftime("%Y-%m-%d"),
+                  d.strftime("%Y-%m"),
+                  1 if d.dayofweek >= 5 else 0) for d in dates]
+    conn.executemany("INSERT INTO dim_date VALUES (?,?,?,?)", date_rows)
+
+    # ---- fct_sales：约 3000 行子订单 ----
+    # 每个客户的活跃度不同（会员更活跃），用于后面的复购分析
+    act = rng.gamma(2.0, 1.0, n_cust) * np.where(members == 1, 1.6, 1.0)
+    p_cust = act / act.sum()
+    cust_ids = rng.choice(np.arange(1, n_cust + 1), 3000, p=p_cust)
+    sku_ids = rng.choice(np.arange(1, 31), 3000,
+                         p=np.linspace(1.6, 0.4, 30) / np.linspace(1.6, 0.4, 30).sum())
+    store_w = [0.22, 0.15, 0.13, 0.32, 0.18]
+    store_ids = rng.choice([1, 2, 3, 4, 5], 3000, p=store_w)
+    day_ids = rng.choice(len(dates), 3000)  # 先均匀取，下面按周末加权重抽
+    # 周末权重更高（真实零售特征）
+    w = np.array([1.4 if d.dayofweek >= 5 else 1.0 for d in dates])
+    day_ids = rng.choice(len(dates), 3000, p=w / w.sum())
+    rows = []
+    for k in range(3000):
+        d = dates[day_ids[k]]
+        price = prod_rows[sku_ids[k] - 1][4]
+        qty = int(rng.choice([1, 1, 1, 2, 2, 3]))
+        disc = round(price * qty * rng.choice([0.0, 0.0, 0.05, 0.1]), 2)
+        status = int(rng.choice([-1, 1, 2, 3, 4], p=[0.04, 0.08, 0.18, 0.25, 0.45]))
+        rows.append((k + 1, 10000 + k // 2, int(cust_ids[k]), int(sku_ids[k]),
+                     int(store_ids[k]), d.strftime("%Y%m%d"),
+                     price, qty, round(price * qty, 2), disc, status))
+    conn.executemany("INSERT INTO fct_sales VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    return conn, len(rows)
+
+
+# ============================================================
+# 2) 星型模型结构图
+# ============================================================
+def plot_star_schema():
+    fig, ax = plt.subplots(figsize=(10.5, 6.6))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 9.4)
+    ax.axis("off")
+    ax.text(7.0, 9.0, "交易域星型模型（sqlite3 落地版，白皮书 6.6 + 6.2.1 字段）",
+            ha="center", fontsize=13, fontweight="bold")
+
+    def table(x, y, w, h, title, fields, color):
+        b = FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                           boxstyle="round,pad=0.04,rounding_size=0.1",
+                           fc="white", ec=color, lw=1.6)
+        ax.add_patch(b)
+        hd = FancyBboxPatch((x - w / 2, y + h / 2 - 0.52), w, 0.52,
+                            boxstyle="round,pad=0.02,rounding_size=0.08",
+                            fc=color, ec=color)
+        ax.add_patch(hd)
+        ax.text(x, y + h / 2 - 0.26, title, ha="center", va="center",
+                fontsize=10.5, color="white", fontweight="bold")
+        for i, f in enumerate(fields):
+            ax.text(x - w / 2 + 0.15, y + h / 2 - 0.85 - i * 0.4, f,
+                    ha="left", va="center", fontsize=8.4, color="#333")
+
+    # 中心事实表
+    table(7.0, 4.4, 3.6, 3.4, "fct_sales（事实：子订单）",
+          ["id, order_id (PK)", "customer_id → 客户", "sku_id → SKU",
+           "store_id → 门店", "date_key → 日期", "price, quantity",
+           "total_amount, discount", "status(-1/1/2/3/4)"], ORANGE)
+    # 四周维度表
+    table(2.2, 7.4, 3.2, 2.1, "dim_customer",
+          ["id (PK)", "gender 0/1/2", "is_member", "status -1/1/2"], BLUE)
+    table(11.8, 7.4, 3.2, 2.1, "dim_product",
+          ["sku_id (PK)", "spu_name", "category, brand", "price"], GREEN)
+    table(2.2, 2.0, 3.2, 2.1, "dim_store",
+          ["store_id (PK)", "store_name", "city", "channel_type 1/2"], PURPLE)
+    table(11.8, 2.0, 3.2, 2.1, "dim_date",
+          ["date_key (PK)", "dt, ym", "is_weekend"], BLUE)
+
+    # 四条连线：事实表边缘 → 维度表边缘（不穿框）
+    for (x1, y1, x2, y2) in [(5.5, 6.1, 3.4, 6.35), (8.5, 6.1, 10.2, 6.35),
+                             (5.5, 2.7, 3.8, 2.6), (8.5, 2.7, 10.2, 2.6)]:
+        ax.plot([x1, x2], [y1, y2], color=GREY, lw=1.3)
+
+    ax.text(7.0, 0.55,
+            "业务对象→dim_ 维度逻辑表，业务活动→fct_ 事实逻辑表（DataPhin 体系）；"
+            "星型模型=事实表居中、维度表环绕",
+            ha="center", fontsize=9, color=GREY)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.3_星型模型.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+# 3) 典型分析 SQL（星型模型的最常见用法）
+# ============================================================
+def run_analytics(conn):
+    q1 = """
+    -- 各门店销售额与订单数（有效订单：status>0）
+    SELECT s.store_name, s.city,
+           COUNT(DISTINCT f.order_id)          AS 订单数,
+           ROUND(SUM(f.total_amount), 0)       AS 销售额,
+           ROUND(SUM(f.discount_amount), 0)    AS 折扣额
+    FROM fct_sales f
+    JOIN dim_store s ON f.store_id = s.store_id
+    WHERE f.status > 0
+    GROUP BY s.store_id ORDER BY 销售额 DESC"""
+    df1 = pd.read_sql(q1, conn)
+    print("=" * 84)
+    print("SQL-1  各门店销售额（有效订单）")
+    print(df1.to_string(index=False))
+
+    q2 = """
+    -- 线下门店 vs 线上电商：月度销售额对比
+    SELECT d.ym,
+           SUM(CASE WHEN s.channel_type=1 THEN f.total_amount ELSE 0 END) AS 线下,
+           SUM(CASE WHEN s.channel_type=2 THEN f.total_amount ELSE 0 END) AS 线上
+    FROM fct_sales f
+    JOIN dim_store s ON f.store_id = s.store_id
+    JOIN dim_date  d ON f.date_key = d.date_key
+    WHERE f.status > 0
+    GROUP BY d.ym ORDER BY d.ym"""
+    df2 = pd.read_sql(q2, conn)
+    print("\nSQL-2  月度线上线下对比")
+    print(df2.to_string(index=False))
+
+    q3 = """
+    -- 会员 vs 非会员：客单价与人均购买次数（复购分析的基础口径）
+    SELECT c.is_member                                   AS 是否会员,
+           COUNT(DISTINCT c.id)                          AS 客户数,
+           COUNT(DISTINCT f.order_id)                    AS 订单数,
+           ROUND(SUM(f.total_amount)/COUNT(DISTINCT f.order_id), 1) AS 客单价,
+           ROUND(COUNT(DISTINCT f.order_id)*1.0/COUNT(DISTINCT c.id), 1) AS 人均订单
+    FROM fct_sales f
+    JOIN dim_customer c ON f.customer_id = c.id
+    WHERE f.status > 0
+    GROUP BY c.is_member"""
+    df3 = pd.read_sql(q3, conn)
+    print("\nSQL-3  会员 vs 非会员")
+    print(df3.to_string(index=False))
+    return df1, df2, df3
+
+
+def plot_results(df1, df2):
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 5))
+    ax = axes[0]
+    ax.barh(df1["store_name"][::-1], df1["销售额"][::-1] / 10000,
+            color=ORANGE, alpha=0.85)
+    for i, v in enumerate(df1["销售额"][::-1] / 10000):
+        ax.text(v * 1.01, i, f"{v:,.0f}万", va="center", fontsize=9, color=GREY)
+    ax.set_title("各门店销售额（万元，有效订单）", fontsize=12)
+    ax.set_xlim(0, df1["销售额"].max() / 10000 * 1.18)
+    ax.tick_params(labelsize=9)
+
+    ax = axes[1]
+    x = np.arange(len(df2))
+    ax.bar(x - 0.18, df2["线下"] / 10000, 0.36, label="线下门店", color=BLUE)
+    ax.bar(x + 0.18, df2["线上"] / 10000, 0.36, label="线上电商", color=PURPLE)
+    ax.set_xticks(x)
+    ax.set_xticklabels(df2["ym"], fontsize=9)
+    ax.set_ylabel("销售额（万元）", fontsize=9)
+    ax.set_title("月度线上线下销售额对比", fontsize=12)
+    ax.legend(fontsize=9)
+    plt.tight_layout()
+    p = os.path.join(CHART_DIR, "12.3_门店与渠道分析.png")
+    plt.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close()
+    print(f"[图] 已保存：{p}")
+    return p
+
+
+# ============================================================
+if __name__ == "__main__" or True:  # 兼容 Jupyter 直接粘贴运行
+    conn, n = build_db()
+    print(f"星型模型建库完成：fct_sales {n} 行子订单，"
+          f"dim_customer 200 / dim_product 30 SKU / dim_store 5 / dim_date 92 天")
+    plot_star_schema()
+    df1, df2, df3 = run_analytics(conn)
+    plot_results(df1, df2)
+    # 自检：事实表金额合计与 SQL 汇总一致
+    total_py = pd.read_sql("SELECT ROUND(SUM(total_amount),2) t FROM fct_sales "
+                           "WHERE status>0", conn)["t"][0]
+    total_sql = df1["销售额"].sum()
+    assert abs(total_py - total_sql) < 1.0, "SQL 汇总与直接求和不一致"
+    print(f"\n[自检] 有效订单金额直接求和 {total_py:,.0f} = 各门店汇总 "
+          f"{total_sql:,.0f}，一致。")
+    conn.close()
+    print("12.3 完成。")

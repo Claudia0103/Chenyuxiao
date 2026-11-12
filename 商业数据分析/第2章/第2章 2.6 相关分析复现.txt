@@ -1,0 +1,46 @@
+# ===== 第2章 2.6 相关分析复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/3-1相关分析-参考.xlsx)
+# 迁移：Python (pandas + numpy + scipy)
+# 【项目内涵理解】
+#   相关分析衡量两个连续变量 x、y 的线性关联强度：
+#     用 Pearson 相关系数 r ∈[-1,1]，并给出显著性(p值)
+#     再画散点图 + 最小二乘回归线直观展示关系方向。
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/3-1相关分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/3-1相关分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# ① 读原始数据
+raw = pd.read_excel(XLSX, sheet_name="原始数据", header=0)
+raw.columns = raw.columns.str.strip()
+
+# ② Pearson 相关
+r, p = np.corrcoef(raw["x"], raw["y"])[0, 1], None
+from scipy import stats
+res = stats.pearsonr(raw["x"], raw["y"])
+print(f"样本量 n = {len(raw)}")
+print(f"Pearson 相关系数 r = {res.statistic:.6f}   (p值 = {res.pvalue:.3e})")
+print(f"  决定系数 R² = {res.statistic**2:.6f}")
+print(f"  x均值={raw['x'].mean():.2f}  y均值={raw['y'].mean():.2f}")
+
+# ③ 回归线 y = a + b x
+b, a = np.polyfit(raw["x"], raw["y"], 1)
+print(f"  回归方程: y = {a:.4f} + {b:.6f} x")
+
+# ④ 可视化
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.scatter(raw["x"], raw["y"], color="#4C78A8", alpha=0.6, label="样本点")
+xs = np.linspace(raw["x"].min(), raw["x"].max(), 100)
+ax.plot(xs, a + b*xs, color="#E45756", lw=2, label=f"回归线 (r={res.statistic:.3f})")
+ax.set_xlabel("x"); ax.set_ylabel("y")
+ax.set_title("相关分析：x 与 y 的线性相关"); ax.legend()
+fig.savefig(f"{CHART_DIR}/26_相关分析.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/26_相关分析.png")

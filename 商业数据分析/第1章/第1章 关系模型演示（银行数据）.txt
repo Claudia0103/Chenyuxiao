@@ -1,0 +1,74 @@
+# ===== 第1章 Part2：关系模型演示（银行数据）复现 =====
+# 原实现：Power BI (用PowerB演示数据模型的用处.pbix)；此处迁移为 Python
+# 内涵：关系模型=多张规范化表靠主键/外键关联，分析必须显式 join（2~4张表）
+#       clients─disp→accounts─→loans/cards/trans/order；district 提供地区名
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ① 改成你本机的实际路径
+BASE = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第1章 数据分析思维/关系模型演示-不建议用poweBI操作关系型数据模型"
+CHART_DIR = "charts"                     # 图表存到当前目录下的 charts/
+TRANS_NROWS = 200_000                    # trans 约60MB，演示抽样；跑全量设 None
+
+# ② 银行 CSV 是 GBK 编码，必须指定 encoding
+def _read(name, **kw):
+    return pd.read_csv(f"{BASE}/{name}", encoding="gbk", **kw)
+
+district = _read("district.csv")   # A1=地区编号, A4=地区名
+clients  = _read("clients.csv")
+accounts = _read("accounts.csv")
+disp     = _read("disp.csv")
+loans    = _read("loans.csv")
+card     = _read("card.csv")
+order    = _read("order.csv")
+trans    = _read("trans.csv", nrows=TRANS_NROWS) if TRANS_NROWS else _read("trans.csv")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# —— 分析 1：每个客户(所有者)的贷款总额 ——
+# 链路：clients ─disp→ accounts ─→ loans
+owner_loans = (disp[disp["type"] == "所有者"]
+               .merge(loans, on="account_id", how="left")
+               .groupby("client_id")["amount"].sum()
+               .reset_index(name="贷款总额"))
+print("【客户贷款总额（前10）】\n",
+      owner_loans.sort_values("贷款总额", ascending=False).head(10), "\n")
+
+# —— 分析 2：各地区贷款情况 ——
+# 链路：accounts ─→ loans；accounts.district_id ─→ district.A1
+region_loan = (accounts.merge(loans, on="account_id", how="left")
+               .groupby("district_id")["amount"].agg(["count", "sum"])
+               .reset_index().rename(columns={"count": "贷款笔数", "sum": "贷款总额"}))
+region_loan = region_loan.merge(district[["A1", "A4"]],
+                                left_on="district_id", right_on="A1")
+top_region = region_loan.sort_values("贷款总额", ascending=False).head(10)
+print("【各地区贷款（前10）】\n", top_region, "\n")
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.bar(top_region["A4"].astype(str), top_region["贷款总额"], color="#4C78A8")
+ax.set_title("各地区贷款总额 Top10"); ax.tick_params(axis="x", rotation=30)
+fig.savefig(f"{CHART_DIR}/11_地区贷款.png", dpi=150, bbox_inches="tight"); plt.close(fig)
+
+# —— 分析 3：账户交易笔数与总交易额（trans 抽样）——
+acc_trans = (trans.groupby("account_id")
+             .agg(交易笔数=("trans_id", "count"), 总交易额=("amount", "sum"))
+             .reset_index())
+print("【账户交易（前10）】\n",
+      acc_trans.sort_values("总交易额", ascending=False).head(10), "\n")
+
+# —— 分析 4：银行卡类型分布 ——
+card_dist = card["type"].value_counts()
+print("【银行卡类型分布】\n", card_dist, "\n")
+fig, ax = plt.subplots(figsize=(5, 5))
+ax.pie(card_dist.values, labels=card_dist.index, autopct="%.1f%%", startangle=90)
+ax.set_title("银行卡类型分布")
+fig.savefig(f"{CHART_DIR}/12_银行卡类型.png", dpi=150, bbox_inches="tight"); plt.close(fig)
+
+# —— 分析 5：贷款状态分布（A/C=正常, B/D=违约）——
+status_dist = loans["status"].value_counts()
+print("【贷款状态分布】\n", status_dist, "\n")
+
+print("关系模型要点：以上每个指标都需要 2~4 张表显式 join，")
+print("这正是它不适合直接用 Power BI 拖拽、而应用 SQL/Python 处理的原因。")

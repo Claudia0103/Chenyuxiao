@@ -1,0 +1,151 @@
+# 3.3_电商精准营销.py
+# ============================================================
+# 第3章 案例3：电商平台的精准营销 —— Python 复现
+# 作业要求：Power BI / Excel 分析 -> 理解项目内涵 -> 用 Python 实现
+#
+# 源数据：第3章 商业数据分析框架/案例3：电商平台的精准营销/
+#         案例3：电商平台的精准营销-原始数据.xlsx
+# 完整案例(参考)：案例3：电商平台的精准营销-完整案例.xlsx
+#         含「业务需求 / 原始数据 / 准备区 / 报表界面」，
+#         报表界面最终呈现 4 张图（准备区为中间过程，二者图一致），复现这 4 张：
+#           ① 购买客户的性别分布              —— 饼图
+#           ② 女性消费客户的年龄段分布          —— 饼图
+#           ③ 50 岁以上的女性客户的消费品类分布  —— 柱状图（条形）
+#           ④ 50 岁以上女性服饰和护肤品消费人群的支付方式分布 —— 柱状图
+#
+# 数据特征：3926 条记录（客户ID 唯一），均为 2023 年 1 月；
+#         性别 Male/Female；年龄 18-69；品类 8 类；支付方式 3 类。
+#
+# 【教材数据勘误 · 图②】
+# 教材完整案例里「女性消费客户的年龄段分布」这张饼图给的是 265/313/412/565（合计 1555），
+# 但这个数是错的，三点证据：
+#   1) 同一工作簿「准备区」sheet 里的逐年龄明细（18岁42人、19岁49人、20岁38人…）
+#      按 18-25/26-35/36-49/50+ 分段求和，得到 340/460/653/918，与本脚本直接算的一致；
+#   2) 265+313+412+565 = 1555，恰好等于男性总人数，说明该汇总块把筛性别那一步做丢了；
+#   3) 教材自己的图③「50岁以上女性品类分布」8 类之和是 918，与 918 吻合，与 565 矛盾。
+# 所以本脚本按原始数据算，用 340/460/653/918；打印时会同时给出教材值和差异说明。
+# 其余三张图（性别 2371/1555、50+品类、支付方式 150/201/94）与教材完全一致。
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# 教材原始数据路径（实际数据在桌面；Baidu 网盘路径仅供参考）
+CASE_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例3：电商平台的精准营销"
+# CASE_DIR = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例3：电商平台的精准营销"
+DATA_PATH = os.path.join(CASE_DIR, "案例3：电商平台的精准营销-原始数据.xlsx")
+
+PALETTE = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#EECA3B", "#B279A2", "#FF9DA6"]
+
+
+def load_data():
+    df = pd.read_excel(DATA_PATH)
+    df.columns = [str(c).strip() for c in df.columns]
+    df["年龄"] = pd.to_numeric(df["年龄"], errors="coerce")
+    return df
+
+
+def main():
+    df = load_data()
+    print("原始数据: {} 行, 女性 {} 行, 男性 {} 行".format(
+        len(df), (df["性别"] == "Female").sum(), (df["性别"] == "Male").sum()))
+
+    # ---------- ① 购买客户的性别分布（饼图）----------
+    gender = df["性别"].value_counts()
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.pie(gender.values, labels=gender.index, autopct="%.1f%%",
+           colors=PALETTE[:len(gender)], startangle=90,
+           wedgeprops=dict(edgecolor="white"))
+    ax.set_title("购买客户的性别分布")
+    fig.savefig(f"{CHART_DIR}/33a_性别分布.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/33a_性别分布.png")
+
+    # ---------- ② 女性消费客户的年龄段分布（饼图）----------
+    f = df[df["性别"] == "Female"].copy()
+    bins = [17, 25, 35, 49, 200]
+    labels = ["18-25岁", "26-35岁", "36-49岁", "50岁以上"]
+    f["年龄段"] = pd.cut(f["年龄"], bins=bins, labels=labels)
+    age_dist = f["年龄段"].value_counts().reindex(labels)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.pie(age_dist.values, labels=age_dist.index, autopct="%.1f%%",
+           colors=PALETTE[:len(labels)], startangle=90,
+           wedgeprops=dict(edgecolor="white"))
+    ax.set_title("女性消费客户的年龄段分布")
+    fig.savefig(f"{CHART_DIR}/33b_女性年龄段分布.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/33b_女性年龄段分布.png")
+
+    # ---------- ③ 50 岁以上的女性客户的消费品类分布（柱状）----------
+    f50 = f[f["年龄"] >= 50]
+    cat_order = ["Books", "Clothing", "Cosmetics", "Food & Beverage", "Shoes",
+                 "Souvenir", "Technology", "Toys"]
+    cat = f50["品类"].value_counts().reindex(cat_order).fillna(0).astype(int)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars = ax.bar(cat.index, cat.values, color="#4C78A8")
+    for b, v in zip(bars, cat.values):
+        ax.text(b.get_x() + b.get_width() / 2, v, str(v),
+                ha="center", va="bottom", fontsize=9)
+    ax.set_title("50 岁以上的女性客户的消费品类分布")
+    ax.set_ylabel("客户数")
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right", fontsize=8)
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/33c_50岁以上女性品类.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/33c_50岁以上女性品类.png")
+
+    # ---------- ④ 50 岁以上女性服饰和护肤品消费人群的支付方式分布（柱状）----------
+    f50_cc = f50[f50["品类"].isin(["Clothing", "Cosmetics"])]
+    pay_order = ["Alipay", "Card", "WeChat Pay"]
+    pay = f50_cc["支付方式"].value_counts().reindex(pay_order).fillna(0).astype(int)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    bars = ax.bar(pay.index, pay.values, color=["#4C78A8", "#F58518", "#54A24B"])
+    for b, v in zip(bars, pay.values):
+        ax.text(b.get_x() + b.get_width() / 2, v, str(v),
+                ha="center", va="bottom", fontsize=10)
+    ax.set_title("50 岁以上女性服饰和护肤品消费人群的支付方式分布")
+    ax.set_ylabel("客户数")
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/33d_50岁以上女性支付方式.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/33d_50岁以上女性支付方式.png")
+
+    # 核对：打印关键数值
+    print("\n[核对] 性别分布:", gender.to_dict())
+    print("[核对] 女性年龄段分布:", age_dist.to_dict())
+    print("[核对] 50+ 女性品类分布:", cat.to_dict())
+    print("[核对] 50+ 女性服饰/护肤品支付方式:", pay.to_dict())
+
+    # 与教材四张图逐个对账（教材值取自完整案例 chart1~chart4.xml）
+    textbook = {
+        "①性别分布": ({"Female": 2371, "Male": 1555}, gender.to_dict()),
+        "②女性年龄段": ({"18-25岁": 265, "26-35岁": 313, "36-49岁": 412, "50岁以上": 565},
+                    age_dist.to_dict()),
+        "③50+品类": ({"Books": 57, "Clothing": 310, "Cosmetics": 135, "Food & Beverage": 144,
+                    "Shoes": 99, "Souvenir": 35, "Technology": 42, "Toys": 96}, cat.to_dict()),
+        "④50+支付方式": ({"Alipay": 150, "Card": 201, "WeChat Pay": 94}, pay.to_dict()),
+    }
+    print("\n[对账] 教材 vs 本脚本")
+    for k, (tb, mine) in textbook.items():
+        same = all(int(tb[x]) == int(mine[x]) for x in tb)
+        print("  {}: {} 教材={} 本脚本={}".format(
+            k, "一致" if same else "不一致", list(tb.values()), [int(mine[x]) for x in tb]))
+    print("  注：②不一致是教材汇总错误（265+313+412+565=1555=男性总数），"
+          "准备区明细与本脚本一致，见文件头勘误说明。")
+
+    print("\n案例3（电商精准营销）4 张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

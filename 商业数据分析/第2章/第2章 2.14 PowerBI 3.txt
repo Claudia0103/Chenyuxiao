@@ -1,0 +1,84 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.16 PowerBI 函数练习：人力资源看板 复现
+================================================================
+原教材实现：PowerBI（5、PowerBI基本操作/函数练习文件/人力案例/人力资源看板.pbix）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+人力资源看板本质是对“员工信息表”做多维统计：
+  字段：员工工号/姓名/性别/部门/职称/职级/出生日期/入职日期/离职日期/员工状态/文化程度
+看板通常展示：各部门人数、性别构成、职称/文化程度分布、离职率、年龄与司龄结构。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CASE = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/函数练习文件/人力案例"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取 ----------
+emp = pd.read_excel(f"{CASE}/员工信息.xlsx")
+emp["出生日期"] = pd.to_datetime(emp["出生日期"])
+emp["入职日期"] = pd.to_datetime(emp["入职日期"])
+emp["离职日期"] = pd.to_datetime(emp["离职日期"], errors="coerce")
+ref_date = pd.Timestamp("2025-12-31")
+emp["年龄"] = (ref_date - emp["出生日期"]).dt.days // 365
+emp["司龄"] = (ref_date - emp["入职日期"]).dt.days // 365
+emp["是否离职"] = emp["离职日期"].notna()
+
+print("【员工信息概览】")
+print(f"总人数 = {len(emp)}，在职 = {(emp['员工状态']=='在职').sum()}，离职 = {emp['是否离职'].sum()}")
+print(f"整体离职率 = {emp['是否离职'].mean()*100:.2f}%\n")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 2. 部门人数 ----------
+dep = emp.groupby("部门").size().sort_values(ascending=False)
+print("【各部门人数】")
+print(dep.to_string())
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.bar(dep.index, dep.values, color="#4C78A8")
+ax.set_title("各部门人数分布"); ax.set_ylabel("人数"); plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "216a_部门人数.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 3. 性别 & 文化程度 ----------
+gender = emp.groupby("性别").size()
+edu = emp.groupby("文化程度").size().sort_values(ascending=False)
+print("\n【性别构成】"); print(gender.to_string())
+print("\n【文化程度构成】"); print(edu.to_string())
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+axes[0].pie(gender.values, labels=gender.index, autopct="%1.1f%%", startangle=90)
+axes[0].set_title("性别构成")
+axes[1].bar(edu.index, edu.values, color="#54A24B")
+axes[1].set_title("文化程度构成"); axes[1].set_ylabel("人数"); plt.xticks(rotation=45)
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "216b_性别文化.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 职称分布 ----------
+title = emp.groupby("职称").size().sort_values(ascending=False)
+print("\n【职称分布 TOP】"); print(title.head(10).to_string())
+
+# ---------- 5. 年龄 & 司龄结构 ----------
+print(f"\n【年龄】均值={emp['年龄'].mean():.1f}，最小={emp['年龄'].min()}，最大={emp['年龄'].max()}")
+print(f"【司龄】均值={emp['司龄'].mean():.1f}，最小={emp['司龄'].min()}，最大={emp['司龄'].max()}")
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+axes[0].hist(emp["年龄"], bins=15, color="#F58518"); axes[0].set_title("年龄分布"); axes[0].set_xlabel("年龄")
+axes[1].hist(emp["司龄"], bins=15, color="#9D9D9D"); axes[1].set_title("司龄分布"); axes[1].set_xlabel("司龄(年)")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "216c_年龄司龄.png"), dpi=150, bbox_inches="tight")
+plt.show()

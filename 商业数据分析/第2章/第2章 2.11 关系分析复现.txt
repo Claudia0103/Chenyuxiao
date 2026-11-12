@@ -1,0 +1,124 @@
+# ===== 第2章 2.11 关系分析复现 =====
+# 原实现：Excel (2、…/data-有答案/5关系分析-参考.xlsx)，参考含 4 张图
+#   （3 张常规图 + 1 张扩展图 chartEx：各营销活动中销售额对比图 箱线图）
+# 迁移：Python
+# 【项目内涵理解】分析变量间关系，分三类：
+#   ① 分类变量对比（各营销活动的下单/未下单人数）
+#   ② 分类×分类（客户忠诚度与满意度关系）
+#   ③ 两个连续变量的相关（产出收益 vs 投入成本 → Pearson 相关 + 散点）
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/5关系分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/2、由基础分析范式引申出的分析方法/data-有答案/5关系分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+raw = pd.read_excel(XLSX, sheet_name="关系图", header=None)
+
+def find_col(keyword):
+    for c in range(raw.shape[1]):
+        if any(str(raw.iloc[r, c]) == keyword for r in range(6)):
+            return c
+    return None
+
+def find_col_row1(keyword):
+    """只在第 1 行(表头行)找表头，避免与下方的「营销活动 1-5」明细块混淆。"""
+    for c in range(raw.shape[1]):
+        if str(raw.iloc[0, c]) == keyword:
+            return c
+    return None
+
+# ---------- ① 各营销活动 下单/未下单（营销活动 1-5）----------
+mkt_rows = []
+for r in range(raw.shape[0]):
+    v = str(raw.iloc[r, 1])
+    if v.startswith("营销活动"):
+        mkt_rows.append([v,
+                         pd.to_numeric(raw.iloc[r, 2], errors="coerce"),
+                         pd.to_numeric(raw.iloc[r, 3], errors="coerce")])
+cmp = pd.DataFrame(mkt_rows, columns=["营销活动", "下单用户", "未下单用户"])
+print("【营销活动 下单/未下单对比】")
+print(cmp.to_string(index=False))
+
+# ---------- ② 客户忠诚度 与 满意度（忠诚度高/中/低 × 满意/不满意）----------
+loy_rows = []
+for r in range(raw.shape[0]):
+    v = str(raw.iloc[r, 1])
+    if v in ("忠诚度高", "忠诚度中", "忠诚度低"):
+        loy_rows.append([v,
+                         pd.to_numeric(raw.iloc[r, 2], errors="coerce"),
+                         pd.to_numeric(raw.iloc[r, 3], errors="coerce")])
+loy = pd.DataFrame(loy_rows, columns=["忠诚度", "满意", "不满意"])
+print("\n【客户忠诚度与满意度关系】")
+print(loy.to_string(index=False))
+
+# ---------- ③ 两个连续变量相关：产出收益 vs 投入成本 ----------
+col_y = find_col("产出收益"); col_x = find_col("投入成本")
+y = pd.to_numeric(raw.iloc[1:, col_y], errors="coerce").dropna()
+x = pd.to_numeric(raw.iloc[1:, col_x], errors="coerce").dropna()
+n = min(len(x), len(y))
+x, y = x.iloc[:n].reset_index(drop=True), y.iloc[:n].reset_index(drop=True)
+r = np.corrcoef(x, y)[0, 1]
+print(f"\n【产出收益 vs 投入成本】 n={n}  Pearson r={r:.4f}")
+
+# ---------- 图1：各营销活动下单转化对比（分组柱）----------
+fig, ax = plt.subplots(figsize=(8, 4.5))
+xs = np.arange(len(cmp))
+ax.bar(xs - 0.2, cmp["下单用户"], width=0.4, label="下单用户", color="#4C78A8")
+ax.bar(xs + 0.2, cmp["未下单用户"], width=0.4, label="未下单用户", color="#F58518")
+ax.set_xticks(xs); ax.set_xticklabels(cmp["营销活动"])
+ax.set_title("各营销活动下单转化情况对比"); ax.set_ylabel("人数"); ax.legend()
+fig.savefig(f"{CHART_DIR}/211a_营销活动对比.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/211a_营销活动对比.png")
+
+# ---------- 图2：客户忠诚度与满意度关系（分组柱）----------
+fig, ax = plt.subplots(figsize=(8, 4.5))
+xs = np.arange(len(loy))
+ax.bar(xs - 0.2, loy["满意"], width=0.4, label="满意", color="#54A24B")
+ax.bar(xs + 0.2, loy["不满意"], width=0.4, label="不满意", color="#E45756")
+ax.set_xticks(xs); ax.set_xticklabels(loy["忠诚度"])
+ax.set_title("客户忠诚度与满意度关系"); ax.set_ylabel("人数"); ax.legend()
+fig.savefig(f"{CHART_DIR}/211b_忠诚度满意度.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/211b_忠诚度满意度.png")
+
+# ---------- 图3：投入产出分析图（散点 + 回归）----------
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.scatter(x, y, color="#4C78A8", alpha=0.6)
+if len(x) > 1:
+    bb, aa = np.polyfit(x, y, 1)
+    xs_ = np.linspace(x.min(), x.max(), 50)
+    ax.plot(xs_, aa + bb * xs_, color="#E45756", lw=2, label=f"r={r:.3f}")
+ax.set_xlabel("投入成本"); ax.set_ylabel("产出收益")
+ax.set_title("投入产出分析图"); ax.legend()
+fig.savefig(f"{CHART_DIR}/211c_投入产出散点.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/211c_投入产出散点.png")
+
+# ---------- 图4：各营销活动中销售额对比图（箱线图，chartEx 扩展图）----------
+# 参考：3 个营销活动各自的销售额列(M/N/O)，显示均值标记、显示离群值、exclusive 四分位
+cm = find_col_row1("营销活动 1")
+cn = find_col_row1("营销活动 2")
+co = find_col_row1("营销活动 3")
+a1 = pd.to_numeric(raw.iloc[1:, cm], errors="coerce").dropna()
+a2 = pd.to_numeric(raw.iloc[1:, cn], errors="coerce").dropna()
+a3 = pd.to_numeric(raw.iloc[1:, co], errors="coerce").dropna()
+print(f"\n【各营销活动销售额】 活动1 n={len(a1)} 活动2 n={len(a2)} 活动3 n={len(a3)}")
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.boxplot([a1, a2, a3], tick_labels=["营销活动1", "营销活动2", "营销活动3"],
+           showmeans=True,
+           meanprops=dict(marker="D", markersize=6, markerfacecolor="#E45756",
+                          markeredgecolor="#E45756"),
+           whis=1.5, widths=0.5, patch_artist=True,
+           boxprops=dict(facecolor="#4C78A8", alpha=0.5),
+           medianprops=dict(color="black"))
+ax.set_title("各营销活动中销售额对比图"); ax.set_ylabel("销售额")
+fig.savefig(f"{CHART_DIR}/211d_销售额箱线图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"图表已存: {CHART_DIR}/211d_销售额箱线图.png")

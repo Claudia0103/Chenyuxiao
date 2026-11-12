@@ -1,0 +1,235 @@
+# -*- coding: utf-8 -*-
+"""
+第13章 指标体系管理 —— 13.2 基础数据标准模板复现
+================================================
+复现来源：第13章材料 `1、基础数据标准编制模板.xlsx`
+  - 表“客户主题为例”：基础数据标准的 3 属性（管理/业务/技术）共 22 个字段
+  - 表“标准分布统计”：10 个主题域 × 14 个归口部门 的标准条数透视表（真实数据）
+
+基础数据标准 = 对“具有共享/交换需求的数据元”的定义，按管理、业务、技术
+三类属性描述。本脚本：
+  1) 复现 3 属性模型结构图；
+  2) 用真实透视表画“标准分布统计”热力图 + 各类别总数柱状图；
+  3) 给可运行的 BasicDataElement / BasicStdRegistry（必填校验 + 编号去重）。
+示例数据：CM000001 客户号 取自模板；另补 2 条同结构示例用于演示注册器。
+"""
+
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+import numpy as np
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["font.weight"] = "normal"
+
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = os.getcwd()
+OUT = os.path.join(_HERE, "charts")
+os.makedirs(OUT, exist_ok=True)
+
+C_BLUE, C_GREEN, C_ORANGE = "#2E5E8C", "#3C8C4E", "#D98A2B"
+C_GRAY = "#6B7280"
+
+
+# ======================================================================
+# 1. 数据：3 属性模型（来自模板“客户主题为例”表头，共 22 字段）
+# ======================================================================
+ATTR_MODEL = {
+    "管理属性": (C_BLUE, [
+        "标准编号", "主题", "标准大类", "标准小类",
+        "归口管理部门", "管理负责人", "确认情况"]),
+    "业务属性": (C_GREEN, [
+        "标准中文名称", "标准英文名称", "标准业务定义",
+        "制定依据", "依据来源", "加工逻辑"]),
+    "技术属性": (C_ORANGE, [
+        "标准类型", "代码编号", "现有系统码值", "长度", "精度",
+        "度量单位", "代码规则", "现有应用业务系统", "备注"]),
+}
+
+# 真实透视表（模板“标准分布统计”表，行=主题域，列=归口部门）
+DEPTS = ["三农金融部", "个人业务部", "人力资源部", "信贷管理部", "公司业务部",
+         "合规管理部", "后勤管理部", "国际业务部", "电子银行部", "财务管理部",
+         "资产管理部", "运行管理部", "金融市场部", "风险管理部"]
+DOMAINS = ["交易", "产品", "协议", "地址", "客户", "机构", "渠道", "营销", "财务", "资产"]
+PIVOT = {
+    "交易": [0, 0, 0, 4, 0, 0, 0, 5, 7, 3, 0, 40, 18, 0],
+    "产品": [7, 25, 0, 57, 25, 0, 0, 22, 50, 31, 90, 17, 31, 3],
+    "协议": [0, 3, 0, 138, 14, 0, 0, 74, 60, 1, 62, 66, 82, 11],
+    "地址": [0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 0, 0, 0, 0],
+    "客户": [17, 96, 0, 43, 102, 1, 0, 2, 1, 0, 0, 0, 0, 22],
+    "机构": [0, 0, 31, 0, 0, 0, 0, 34, 2, 0, 2, 0, 3, 0],
+    "渠道": [0, 0, 0, 0, 0, 0, 0, 0, 55, 6, 0, 2, 0, 0],
+    "营销": [0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "财务": [0, 0, 0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0],
+    "资产": [0, 25, 0, 66, 0, 0, 138, 3, 0, 51, 8, 14, 29, 22],
+}
+
+
+# ======================================================================
+# 2. 图1：3 属性模型结构
+# ======================================================================
+def plot_attr_model():
+    fig, ax = plt.subplots(figsize=(14, 6.2))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 6.4)
+    ax.axis("off")
+
+    cols = list(ATTR_MODEL.keys())
+    slot = 14.0 / 3
+    panel_h = 5.2
+    panel_y = 0.7
+    for i, name in enumerate(cols):
+        color, fields = ATTR_MODEL[name]
+        cx = slot * i + slot / 2
+        x0 = cx - slot / 2 + 0.2
+        w = slot - 0.4
+        # 面板
+        ax.add_patch(FancyBboxPatch((x0, panel_y), w, panel_h,
+                     boxstyle="round,pad=0.02,rounding_size=0.1",
+                     fc="#F2F4F7", ec=color, lw=1.6, zorder=1))
+        # 标题
+        ax.add_patch(FancyBboxPatch((x0, panel_y + panel_h - 0.7), w, 0.7,
+                     boxstyle="round,pad=0.02,rounding_size=0.1",
+                     fc=color, ec="none", zorder=2))
+        ax.text(cx, panel_y + panel_h - 0.35, f"{name}（{len(fields)}）",
+                ha="center", va="center", fontsize=13, color="white", fontweight="normal")
+        # 字段列表
+        y = panel_y + panel_h - 1.1
+        for f in fields:
+            ax.text(cx, y, "· " + f, ha="center", va="center",
+                    fontsize=11, color="#222222")
+            y -= 0.42
+
+    ax.set_title("基础数据标准模板：管理 / 业务 / 技术 三类属性（共 22 字段）",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.2_基础数据标准三属性模型.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 3. 图2：标准分布统计热力图（真实透视表）
+# ======================================================================
+def plot_distribution_heatmap():
+    M = np.array([PIVOT[d] for d in DOMAINS], dtype=float)  # 10 x 14
+    fig, ax = plt.subplots(figsize=(15, 5.4))
+    im = ax.imshow(M, cmap="YlGnBu", aspect="auto")
+    ax.set_xticks(range(len(DEPTS)))
+    ax.set_xticklabels(DEPTS, rotation=45, ha="right", fontsize=9)
+    ax.set_yticks(range(len(DOMAINS)))
+    ax.set_yticklabels(DOMAINS, fontsize=10)
+    for i in range(M.shape[0]):
+        for j in range(M.shape[1]):
+            v = int(M[i, j])
+            if v > 0:
+                ax.text(j, i, v, ha="center", va="center",
+                        fontsize=8, color="black" if v < 90 else "white")
+    ax.set_title("基础数据标准分布统计：主题域 × 归口部门（条数，合计 2011）",
+                 fontweight="normal", pad=12)
+    fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02, label="标准条数")
+    p = os.path.join(OUT, "13.2_标准分布热力图.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 4. 图3：各类别标准总数柱状图
+# ======================================================================
+def plot_domain_totals():
+    totals = [sum(PIVOT[d]) for d in DOMAINS]
+    order = sorted(range(len(DOMAINS)), key=lambda k: totals[k], reverse=True)
+    dom = [DOMAINS[k] for k in order]
+    val = [totals[k] for k in order]
+    fig, ax = plt.subplots(figsize=(11, 4.8))
+    bars = ax.bar(dom, val, color=C_BLUE)
+    ax.bar_label(bars, fontsize=10)
+    ax.set_ylabel("标准条数")
+    ax.set_title("各主题域基础数据标准总数（协议/产品/资产最多）",
+                 fontweight="normal", pad=10)
+    ax.spines[["top", "right"]].set_visible(False)
+    p = os.path.join(OUT, "13.2_各类别标准总数.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 5. 可运行：基础数据标准元素 + 注册器
+# ======================================================================
+class BasicDataElement:
+    """一条基础数据标准（数据元）。字段对应模板三属性。"""
+    REQUIRED = ["标准编号", "标准中文名称", "主题", "标准类型"]
+
+    def __init__(self, **kw):
+        self.fields = kw
+
+    def validate(self):
+        miss = [f for f in self.REQUIRED if not self.fields.get(f)]
+        return miss
+
+    def __repr__(self):
+        return f"<基础标准 {self.fields.get('标准编号','?')} " \
+               f"{self.fields.get('标准中文名称','?')}>"
+
+
+class BasicStdRegistry:
+    def __init__(self):
+        self._by_id = {}
+
+    def register(self, elem):
+        miss = elem.validate()
+        if miss:
+            return False, f"缺必填：{miss}"
+        sid = elem.fields["标准编号"]
+        if sid in self._by_id:
+            return False, f"编号重复：{sid}"
+        self._by_id[sid] = elem
+        return True, "OK"
+
+    def summary(self):
+        print(f"已注册基础数据标准：{len(self._by_id)} 条")
+        for e in self._by_id.values():
+            print("  ", e)
+
+
+# ======================================================================
+# 6. 主程序
+# ======================================================================
+def main():
+    # 真实示例：CM000001 客户号（取自模板）
+    cm = BasicDataElement(
+        标准编号="CM000001", 主题="客户", 标准大类="通用信息", 标准小类="基本信息",
+        归口管理部门="信贷管理部", 标准中文名称="客户号", 标准英文名称="Customer ID",
+        标准业务定义="我行为统一管理，根据既定规则生成并分配给客户的唯一编码，"
+                   "在全行内具有唯一性。", 制定依据="同业实践", 标准类型="编码型",
+        长度=30, 现有应用业务系统="业务应用系统")
+    # 同结构补充示例（用于演示注册器，非教材原文）
+    prod = BasicDataElement(
+        标准编号="PD000001", 主题="产品", 标准大类="通用信息", 标准小类="基本信息",
+        归口管理部门="公司业务部", 标准中文名称="产品编号", 标准英文名称="Product ID",
+        标准业务定义="银行产品体系中产品的唯一标识编码。", 制定依据="内部规范",
+        标准类型="编码型", 长度=20, 现有应用业务系统="产品管理系统")
+    bad = BasicDataElement(标准中文名称="缺编号示例")  # 故意缺必填
+
+    reg = BasicStdRegistry()
+    for e in (cm, prod, bad):
+        ok, msg = reg.register(e)
+        print(f"注册 {e.fields.get('标准中文名称','?')} -> {ok} ({msg})")
+    reg.summary()
+
+    paths = [plot_attr_model(), plot_distribution_heatmap(), plot_domain_totals()]
+    print("\n图表已生成：")
+    for p in paths:
+        print("  -", p)
+    return paths
+
+
+if __name__ == "__main__" or True:
+    main()

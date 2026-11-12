@@ -1,0 +1,67 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.18 PowerBI ETL 练习（数据清洗/拆分列/横向合并/纵向合并）复现
+===================================================================================
+原教材实现：PowerBI PowerQuery（5、PowerBI基本操作/ETL练习文件/*.xlsx）
+本项目迁移：Python (pandas)
+
+【项目内涵理解】
+ETL = 抽取(Extract) → 转换(Transform) → 加载(Load)。PowerQuery 里最常做的四类转换：
+  1) 拆分列：把“一个单元格里逗号分隔的多值”拆成多行（如一个订单号串拆成多个订单）
+  2) 数据清洗：源表有标题行/空行，需要正确定位表头、规整字段（如“8件”提取出数字 8）
+  3) 横向合并：按关键字把两张表左右拼起来（Join，对应 pandas merge）
+  4) 纵向合并：把结构相同或相近的多张表上下摞起来（Append，对应 pandas concat）
+下面把这四个练习用 pandas 一一复现。
+"""
+import os
+import re
+import pandas as pd
+
+ETL = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/ETL练习文件"
+STU = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/函数练习文件/学生考试案例"
+
+print("="*70)
+print("【1. 拆分列】 把“订单号”逗号串拆成多行")
+print("="*70)
+split_df = pd.read_excel(f"{ETL}/ETL演示数据/拆分列示例数据.xlsx")
+print("原始（订单号是一串逗号分隔）：")
+print(split_df[["订单号", "商品名称", "数量", "客户姓名"]].to_string(index=False))
+# 拆分：按逗号拆成列表 → explode 成多行
+split_df["订单号"] = split_df["订单号"].str.split(",")
+exploded = split_df.explode("订单号").reset_index(drop=True)
+exploded["订单号"] = exploded["订单号"].str.strip()
+# “8件” → 提取数字
+exploded["数量数值"] = exploded["数量"].str.extract(r"(\d+)").astype(float)
+print("\n拆分后（每个订单号一行）：")
+print(exploded[["订单号", "商品名称", "数量数值", "客户姓名"]].to_string(index=False))
+
+print("\n" + "="*70)
+print("【2. 数据清洗】 修正表头 + 规整数量字段")
+print("="*70)
+# 源文件第 0 行是标题“电商订单明细表”，真正的表头在第 1 行
+raw = pd.read_excel(f"{ETL}/ETL演示数据/数据清洗示例数据.xlsx", header=1)
+print("清洗后字段：", list(raw.columns))
+raw["下单数量"] = pd.to_numeric(raw["下单数量"], errors="coerce")
+raw["实付金额"] = pd.to_numeric(raw["实付金额"], errors="coerce")
+print(raw[["订单号", "year", "month", "下单城市", "下单数量", "实付金额", "一级类别"]].head(3).to_string(index=False))
+print(f"清洗后行数 = {len(raw)}，实付金额合计 = {raw['实付金额'].sum():,.0f}")
+
+print("\n" + "="*70)
+print("【3. 横向合并（Join）】 学生表 + 考试表 按“学号”左右拼接")
+print("="*70)
+stu = pd.read_excel(f"{STU}/学生及老师信息.xlsx")
+score = pd.read_excel(f"{STU}/考试记录.xlsx")
+merged = stu.merge(score, on="学号", how="left")
+print(merged[["学号", "姓名", "班级", "语文", "数学", "英语"]].head(5).to_string(index=False))
+print(f"合并后列 = {list(merged.columns)}")
+
+print("\n" + "="*70)
+print("【4. 纵向合并（Append）】 门店表上下拼接（含字段名不一致的情况）")
+print("="*70)
+same = pd.read_excel(f"{ETL}/合并演示数据/纵向合并演示-各字段名称一致.xlsx")
+diff = pd.read_excel(f"{ETL}/合并演示数据/纵向合并演示-字段名称不一致.xlsx")
+# 演示：若字段名不一致，先统一列名再 concat
+diff2 = diff.rename(columns={"销售数量": "销售数量", "销售额": "销售额"})  # 一致情况下原名即可
+appended = pd.concat([same, diff2], ignore_index=True)
+print("拼接前两张表行数：", len(same), "+", len(diff2), "= 拼接后", len(appended))
+print(appended.to_string(index=False))

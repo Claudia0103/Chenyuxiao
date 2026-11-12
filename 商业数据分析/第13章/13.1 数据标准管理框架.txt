@@ -1,0 +1,329 @@
+# -*- coding: utf-8 -*-
+"""
+第13章 指标体系管理 —— 13.1 数据标准管理框架
+================================================
+复现来源：
+  - 信通院《数据标准管理实践白皮书》(2019.12) 第13章配套材料，可抽字 PDF
+  - 银行企业标准-基础数据标准.pdf（基础类数据标准框架）
+
+本章主题“指标体系管理”，本质是“数据标准管理”在指标域的落地。
+白皮书把数据标准管理拆成 5 个阶段、3 层组织、3 类制度文件，并把数据标准
+分成“基础类”与“指标类”两大族——后者正是教材第12章 OneModel 派生指标
+四要素的工程化载体。
+
+本脚本做三件事：
+  1) 把“管理框架”结构化（5 阶段 / 3 层组织 / 3 类文件 / 2 大类标准）；
+  2) 用 matplotlib 画 4 张图；
+  3) 给一个可运行的 DataStandardGovernance 类，能打印阶段清单与阶段间流转。
+
+说明：样例文字均按白皮书原文整理；扫描件 JR-T 0137-2017 无法抽字，未直接引用。
+"""
+
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+import matplotlib.patches as patches
+
+# ---- 中文与字体（SimHei，不加粗，回退 normal 400）----
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["font.weight"] = "normal"
+plt.rcParams["axes.titlesize"] = 14
+
+# ---- 输出目录（兼容 Jupyter 直接粘贴运行）----
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = os.getcwd()
+OUT = os.path.join(_HERE, "charts")
+os.makedirs(OUT, exist_ok=True)
+
+# 统一配色
+C_BLUE   = "#2E5E8C"
+C_TEAL   = "#2C8C8C"
+C_ORANGE = "#D98A2B"
+C_GREEN  = "#3C8C4E"
+C_GRAY   = "#6B7280"
+C_RED    = "#B5483B"
+C_PURPLE = "#6A4C93"
+
+
+# ======================================================================
+# 1. 数据：管理框架的结构化描述
+# ======================================================================
+# 数据标准管理 5 阶段（白皮书“二、数据标准管理的主要内容”）
+STAGES = [
+    ("标准分类规划", C_BLUE,
+     ["构建数据标准分类框架", "制定实施路线图", "批准并发布框架与规划"]),
+    ("标准体系建设", C_TEAL,
+     ["分析数据标准现状", "确定数据元及其属性", "定义共享/前瞻性标准"]),
+    ("标准评审发布", C_ORANGE,
+     ["意见征询（多部门）", "数据标准审议", "审批并正式发布"]),
+    ("标准落地执行", C_GREEN,
+     ["差异分析（要求 vs 现状）", "落标实施", "整体规划·分布实施·价值驱动"]),
+    ("标准运营维护", C_PURPLE,
+     ["需求收集与评审", "变更评审·版本管理", "废止无应用对象的标准"]),
+]
+
+# 3 层组织（白皮书“三、(一) 数据标准管理组织架构”）
+ORG = [
+    ("数据标准决策层", C_BLUE,
+     "最高决策组织。组织制定/批准标准规划；审核批准拟发布标准；协调业务与 IT 资源，"
+     "解决分类规划、体系建设、评审发布、执行落地中的重大争议。"),
+    ("数据标准管理层", C_TEAL,
+     "组织协调部门。落实决策层要求，推动业务与 IT 参与；推进标准管理工作进程；"
+     "及时把成果或问题上报决策层审批。"),
+    ("执行/专家层", C_ORANGE,
+     "由数据标准管理专家、相关业务与 IT 专家组成。具体承担标准编制、技术评审、"
+     "落标映射与日常维护工作。"),
+]
+
+# 3 类制度文件（白皮书“三、(二) 数据标准管理制度体系”）
+FILES = [
+    ("管理办法文件", C_BLUE,
+     "企业开展标准管理的工作办法：管理目标、各部门职责、主要工作过程、"
+     "开展标准管理的要求与考核。"),
+    ("规范文件", C_TEAL,
+     "已编制并发布的一系列标准文件，如客户数据标准、产品和服务数据标准、"
+     "统计指标标准等。"),
+    ("操作文件", C_ORANGE,
+     "各业务部门依办法制定的操作细则，可包含管理办法主要过程的操作指引与模板。"),
+]
+
+# 数据标准分类（白皮书“一、辨析内涵”：基础类 + 指标类）
+CLASS_ROOT = "数据标准"
+CLASS_BASIC = ("基础类数据标准", C_BLUE,
+               ["客户", "产品", "交易", "机构", "协议", "渠道",
+                "资产", "权益", "位置", "财务", "营销活动", "公共"])
+CLASS_INDICATOR = ("指标类数据标准", C_TEAL,
+                   [("基础指标标准", "不可再拆的最小指标，如“各项贷款余额”"),
+                    ("计算(组合)指标标准", "由基础指标经加工得到，如“不良率”")])
+
+
+# ======================================================================
+# 2. 绘图辅助
+# ======================================================================
+def _box(ax, x, y, w, h, text, fc, tc="white", fs=11, lh=1.35, weight="normal"):
+    ax.add_patch(FancyBboxPatch((x, y), w, h,
+                 boxstyle="round,pad=0.02,rounding_size=0.08",
+                 fc=fc, ec="none", zorder=2))
+    ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
+            fontsize=fs, color=tc, zorder=3, linespacing=lh, fontweight=weight)
+
+
+def _arrow(ax, x1, y1, x2, y2, color=C_GRAY, style="-|>"):
+    ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
+                arrowprops=dict(arrowstyle=style, color=color, lw=1.6),
+                zorder=1)
+
+
+# ======================================================================
+# 3. 图1：数据标准管理 5 阶段生命周期
+# ======================================================================
+def plot_lifecycle():
+    fig, ax = plt.subplots(figsize=(15, 5.2))
+    ax.set_xlim(0, 15)
+    ax.set_ylim(0, 5.4)
+    ax.axis("off")
+
+    n = len(STAGES)
+    slot = 15.0 / n
+    bw, bh = slot * 0.78, 1.5
+    cy = 3.6
+    centers = []
+    for i, (name, color, subs) in enumerate(STAGES):
+        cx = slot * i + slot / 2
+        x0 = cx - bw / 2
+        _box(ax, x0, cy - bh / 2, bw, bh, name, color, fs=13, weight="normal")
+        centers.append(cx)
+        # 子活动（3 行）
+        sub_txt = "\n".join("· " + s for s in subs)
+        ax.text(cx, cy - bh / 2 - 1.05, sub_txt, ha="center", va="top",
+                fontsize=10, color="#333333", linespacing=1.5, zorder=3)
+        # 阶段编号
+        ax.text(x0 + 0.18, cy + bh / 2 - 0.2, f"{i+1}", ha="left", va="top",
+                fontsize=12, color="white", fontweight="normal", zorder=4)
+
+    # 阶段间箭头
+    for i in range(n - 1):
+        x1 = centers[i] + bw / 2
+        x2 = centers[i + 1] - bw / 2
+        _arrow(ax, x1 + 0.05, cy, x2 - 0.05, cy, color=C_GRAY)
+
+    ax.set_title("数据标准管理生命周期：5 个阶段（规划→建设→评审发布→落地执行→运营维护）",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.1_管理生命周期五阶段.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 4. 图2：3 层组织架构
+# ======================================================================
+def plot_org():
+    fig, ax = plt.subplots(figsize=(13, 5.6))
+    ax.set_xlim(0, 13)
+    ax.set_ylim(0, 6)
+    ax.axis("off")
+
+    bw, bh = 11.0, 1.35
+    x0 = 1.0
+    ys = [4.4, 2.7, 1.0]  # 决策 / 管理 / 执行
+    for (name, color, desc), y in zip(ORG, ys):
+        _box(ax, x0, y, bw, bh, "", color, tc=color)
+        # 标题（框内左侧）
+        ax.text(x0 + 0.25, y + bh - 0.32, name, ha="left", va="center",
+                fontsize=13, color="white", fontweight="normal")
+        # 职责（框内，自动换行）
+        ax.text(x0 + 0.25, y + bh - 0.62, _wrap(desc, 46), ha="left", va="top",
+                fontsize=9.5, color="white", linespacing=1.35)
+        if y < 4.4:
+            _arrow(ax, x0 + bw / 2, y + bh, x0 + bw / 2, y + bh + (4.4 - 2.7 - bh),
+                   color=C_GRAY)
+
+    ax.set_title("数据标准管理组织架构：决策层 → 管理层 → 执行/专家层",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.1_三层组织架构.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 5. 图3：3 类制度文件
+# ======================================================================
+def plot_files():
+    fig, ax = plt.subplots(figsize=(13, 4.6))
+    ax.set_xlim(0, 13)
+    ax.set_ylim(0, 4.6)
+    ax.axis("off")
+
+    n = len(FILES)
+    slot = 13.0 / n
+    bw, bh = slot * 0.82, 1.4
+    cy = 3.1
+    for i, (name, color, desc) in enumerate(FILES):
+        cx = slot * i + slot / 2
+        x0 = cx - bw / 2
+        _box(ax, x0, cy - bh / 2, bw, bh, name, color, fs=13)
+        ax.text(cx, cy - bh / 2 - 0.95, _wrap(desc, 16), ha="center", va="top",
+                fontsize=9.5, color="#333333", linespacing=1.45)
+        if i < n - 1:
+            _arrow(ax, cx + bw / 2 + 0.1, cy - bh / 2 - 0.2,
+                   cx + slot - bw / 2 - 0.1, cy - bh / 2 - 0.2, color=C_GRAY)
+
+    ax.set_title("数据标准管理制度体系：管理办法 / 规范文件 / 操作文件",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.1_三类制度文件.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 6. 图4：数据标准分类体系（基础类 + 指标类）
+# ======================================================================
+def plot_classification():
+    fig, ax = plt.subplots(figsize=(14, 6.4))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 6.6)
+    ax.axis("off")
+
+    # 根
+    _box(ax, 5.5, 5.6, 3.0, 0.8, CLASS_ROOT, C_GRAY, fs=14)
+    # 两条主分支
+    _box(ax, 1.4, 4.0, 4.0, 0.85, CLASS_BASIC[0], CLASS_BASIC[1], fs=13)
+    _box(ax, 8.6, 4.0, 4.0, 0.85, CLASS_INDICATOR[0], CLASS_INDICATOR[1], fs=13)
+    _arrow(ax, 7.0, 5.6, 3.4, 4.85, color=C_GRAY)
+    _arrow(ax, 7.0, 5.6, 10.6, 4.85, color=C_GRAY)
+
+    # 基础类：12 个主题域，排成两列放在一个宽框里
+    subj = CLASS_BASIC[2]
+    col_l = "\n".join(f"· {s}" for s in subj[:6])
+    col_r = "\n".join(f"· {s}" for s in subj[6:])
+    _box(ax, 0.6, 1.4, 4.6, 2.2, "", CLASS_BASIC[1])
+    ax.text(2.9, 3.4, "12 个主题域", ha="center", va="center",
+            fontsize=11, color="white", fontweight="normal")
+    ax.text(1.9, 2.9, col_l, ha="left", va="top", fontsize=9.5, color="white", linespacing=1.5)
+    ax.text(3.9, 2.9, col_r, ha="left", va="top", fontsize=9.5, color="white", linespacing=1.5)
+    _arrow(ax, 3.4, 4.0, 2.9, 3.6, color=C_GRAY)
+
+    # 指标类：2 个子类
+    _box(ax, 8.4, 2.7, 3.0, 0.95, CLASS_INDICATOR[2][0][0], CLASS_INDICATOR[1], fs=11.5)
+    ax.text(9.9, 1.9, _wrap(CLASS_INDICATOR[2][0][1], 16), ha="center", va="top",
+            fontsize=9, color="#333333", linespacing=1.4)
+    _box(ax, 11.6, 2.7, 2.4, 0.95, CLASS_INDICATOR[2][1][0], CLASS_INDICATOR[1], fs=10.5)
+    ax.text(12.8, 1.9, _wrap(CLASS_INDICATOR[2][1][1], 12), ha="center", va="top",
+            fontsize=9, color="#333333", linespacing=1.4)
+    _arrow(ax, 10.6, 4.0, 9.9, 3.65, color=C_GRAY)
+    _arrow(ax, 10.6, 4.0, 12.8, 3.65, color=C_GRAY)
+
+    ax.set_title("数据标准分类体系：基础类（数据元） + 指标类（基础/计算指标）",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.1_数据标准分类体系.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+def _wrap(text, width):
+    """按字符宽度简单折行（中文按字计）。"""
+    out, line, cnt = [], "", 0
+    for ch in text:
+        line += ch
+        cnt += 1
+        if cnt >= width and ch not in "，、；。（）()":
+            out.append(line)
+            line, cnt = "", 0
+    if line:
+        out.append(line)
+    return "\n".join(out)
+
+
+# ======================================================================
+# 7. 可运行：数据标准治理阶段模型
+# ======================================================================
+class DataStandardGovernance:
+    """用代码固化白皮书的管理框架，可打印阶段清单与流转顺序。"""
+
+    def __init__(self):
+        self.stages = [s[0] for s in STAGES]
+        self.detail = {s[0]: s[2] for s in STAGES}
+
+    def report(self):
+        print("=" * 56)
+        print("数据标准管理 —— 5 阶段生命周期")
+        print("=" * 56)
+        for i, s in enumerate(self.stages, 1):
+            print(f"{i}. {s}")
+            for a in self.detail[s]:
+                print(f"     - {a}")
+        print("-" * 56)
+        print("流转：", " → ".join(self.stages))
+        print("=" * 56)
+        return self.stages
+
+
+# ======================================================================
+# 8. 主程序
+# ======================================================================
+def main():
+    paths = [
+        plot_lifecycle(),
+        plot_org(),
+        plot_files(),
+        plot_classification(),
+    ]
+    gov = DataStandardGovernance()
+    gov.report()
+    print("\n图表已生成：")
+    for p in paths:
+        print("  -", p)
+    return paths
+
+
+if __name__ == "__main__" or True:
+    main()

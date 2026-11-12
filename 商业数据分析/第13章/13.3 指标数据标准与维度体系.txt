@@ -1,0 +1,374 @@
+# -*- coding: utf-8 -*-
+"""
+第13章 指标体系管理 —— 13.3 指标数据标准与维度体系
+================================================
+复现来源：第13章材料 `2、指标数据标准编制模板.xlsx`
+  - 表“标准定义”：指标数据标准 3 属性（业务/技术/管理）共 23 字段 + 编号
+  - 示例：DZ-G-014 各项贷款余额（根指标）、DZ-P-121 不良率（派生指标）
+  - 表“维度定义 / 维度值代码定义 / 维度树-账户维度”：维度体系
+
+指标数据标准 = 对指标的统一定义，与第12章 OneModel 一脉相承：
+  派生指标 = 根指标（关联标准）+ 维度 + 技术口径（加工逻辑）。
+本脚本：
+  1) 复现指标数据标准 3 属性模型；
+  2) 用 DZ-G-014 / DZ-P-121 演示“根指标→派生指标”的引用关系；
+  3) 画账户维度树（多层级）+ 维度体系（维度类型 / 维度值代码）；
+  4) 给可运行的 IndicatorStandard / DimensionTree 类。
+"""
+
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["font.weight"] = "normal"
+
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = os.getcwd()
+OUT = os.path.join(_HERE, "charts")
+os.makedirs(OUT, exist_ok=True)
+
+C_BLUE, C_GREEN, C_ORANGE, C_PURPLE, C_TEAL = "#2E5E8C", "#3C8C4E", "#D98A2B", "#6A4C93", "#2C8C8C"
+
+
+# ======================================================================
+# 1. 数据
+# ======================================================================
+IND_ATTR = {
+    "业务属性": (C_GREEN, [
+        "业务主题", "一级分类", "二级分类", "三级分类", "中文名称",
+        "指标业务含义", "指标业务口径", "计量单位", "基本频率"]),
+    "技术属性": (C_ORANGE, [
+        "数据来源", "指标类型", "数据类型", "关联标准", "维度", "技术口径"]),
+    "管理属性": (C_BLUE, [
+        "主责部门", "敏感性分类", "适用范围", "入库时间",
+        "指标状态", "生效时间", "失效时间"]),
+}
+IND_KEY = "编号（唯一技术识别码）"
+
+# 两个示例指标（模板“标准定义”）
+IND_G = {  # 根指标
+    "编号": "DZ-G-014", "业务主题": "业务规模", "一级分类": "信贷业务规模",
+    "二级分类": "资产状况", "中文名称": "各项贷款余额（表内）",
+    "指标业务含义": "描述客户贷款本金余额（不含联合贷不属于我行部分）",
+    "指标业务口径": "客户贷款本金余额求和", "计量单位": "元/万元/亿元", "基本频率": "日",
+    "数据来源": "数据仓库", "指标类型": "根指标", "数据类型": "INT",
+    "关联标准": "贷款余额", "维度": "分支机构,地区,产品线",
+    "技术口径": "SELECT sum(T1.XXX) FROM dw_XXX", "主责部门": "财务管理部",
+    "敏感性分类": "内部使用", "适用范围": "银监/人行/总行报送,驾驶舱", "指标状态": "有效"}
+IND_P = {  # 派生指标
+    "编号": "DZ-P-121", "业务主题": "风险合规指标", "一级分类": "信用风险",
+    "中文名称": "不良率（表内）",
+    "指标业务含义": "描述不良贷款占总贷款余额的比重",
+    "指标业务口径": "不良贷款金额/各项贷款余额（表内）", "计量单位": "%", "基本频率": "日",
+    "数据来源": "数据仓库", "指标类型": "派生指标", "数据类型": "FLOAT",
+    "关联标准": "贷款余额", "维度": "分支机构,地区,产品线",
+    "技术口径": "SELECT sum(...) / 各项贷款余额", "主责部门": "风险管理部",
+    "敏感性分类": "内部使用", "适用范围": "银监/人行/总行报送,驾驶舱", "指标状态": "有效"}
+
+# 维度定义（部分）+ 维度值代码定义（AC0001）
+DIM_DEFS = [
+    ("PA-013", "参与人", "企业网上银行客户"),
+    ("PA-014", "参与人", "企业网上银行普通客户"),
+    ("PA-015", "参与人", "企业网上银行高级客户"),
+    ("PA-016", "参与人", "企业网上银行VIP客户"),
+]
+DIM_VALUES = [
+    ("AC0001", "按对公账户活跃度", "01", "迟钝账户"),
+    ("AC0001", "按对公账户活跃度", "02", "活跃账户"),
+    ("AC0001", "按对公账户活跃度", "03", "休眠账户"),
+]
+
+# 账户维度树（模板“维度树-账户维度”，精简）
+DIM_TREE = {
+    "name": "账户", "children": [{
+        "name": "存款账户", "children": [{
+            "name": "个人存款账户", "children": [{
+                "name": "个人存款（不含信用卡溢缴）账户", "children": [
+                    {"name": "个人活期存款账户"},
+                    {"name": "个人定期存款账户（零售板块管理口径）"},
+                    {"name": "个人整存整取存款账户"},
+                    {"name": "个人零存整取存款账户"},
+                    {"name": "个人定活两便存款账户"},
+                    {"name": "个人整存零取存款账户"},
+                    {"name": "个人存本取息存款账户"},
+                    {"name": "个人保证金定期存款账户"},
+                    {"name": "个人教育储蓄存款账户"},
+                    {"name": "个人通知存款账户"},
+                ]}]}]}]}
+
+
+# ======================================================================
+# 2. 图1：指标数据标准 3 属性模型
+# ======================================================================
+def plot_indicator_attr_model():
+    fig, ax = plt.subplots(figsize=(14, 6.6))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 6.8)
+    ax.axis("off")
+
+    # 主键
+    ax.add_patch(FancyBboxPatch((5.5, 6.0), 3.0, 0.6,
+                 boxstyle="round,pad=0.02,rounding_size=0.08",
+                 fc=C_PURPLE, ec="none"))
+    ax.text(7.0, 6.3, IND_KEY, ha="center", va="center",
+            fontsize=11, color="white", fontweight="normal")
+
+    cols = list(IND_ATTR.keys())
+    slot = 14.0 / 3
+    panel_h, panel_y = 5.0, 0.6
+    for i, name in enumerate(cols):
+        color, fields = IND_ATTR[name]
+        cx = slot * i + slot / 2
+        x0 = cx - slot / 2 + 0.2
+        w = slot - 0.4
+        ax.add_patch(FancyBboxPatch((x0, panel_y), w, panel_h,
+                     boxstyle="round,pad=0.02,rounding_size=0.1",
+                     fc="#F2F4F7", ec=color, lw=1.6))
+        ax.add_patch(FancyBboxPatch((x0, panel_y + panel_h - 0.65), w, 0.65,
+                     boxstyle="round,pad=0.02,rounding_size=0.1",
+                     fc=color, ec="none"))
+        ax.text(cx, panel_y + panel_h - 0.32, f"{name}（{len(fields)}）",
+                ha="center", va="center", fontsize=12.5, color="white", fontweight="normal")
+        y = panel_y + panel_h - 1.05
+        for f in fields:
+            ax.text(cx, y, "· " + f, ha="center", va="center", fontsize=10, color="#222222")
+            y -= 0.39
+
+    ax.set_title("指标数据标准模板：编号（主键）+ 业务 / 技术 / 管理 三类属性",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.3_指标数据标准三属性模型.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 3. 图2：根指标 → 派生指标 引用关系
+# ======================================================================
+def plot_root_derived():
+    fig, ax = plt.subplots(figsize=(14, 5.2))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 5.4)
+    ax.axis("off")
+
+    # 根指标卡（左）
+    _card(ax, 0.6, 1.4, 5.4, 3.4, "根指标（基础指标）", C_GREEN, [
+        "DZ-G-014  各项贷款余额（表内）",
+        "业务主题：业务规模 / 信贷业务规模",
+        "指标类型：根指标（不可再拆）",
+        "技术口径：SELECT sum(T1.XXX)",
+        "维度：分支机构, 地区, 产品线",
+    ])
+    # 派生指标卡（右）
+    _card(ax, 8.0, 1.4, 5.4, 3.4, "派生指标（计算/组合指标）", C_ORANGE, [
+        "DZ-P-121  不良率（表内）",
+        "业务主题：风险合规指标 / 信用风险",
+        "指标类型：派生指标",
+        "关联标准：贷款余额  ← 引用根指标",
+        "口径：不良金额 / 各项贷款余额",
+        "维度：分支机构, 地区, 产品线",
+    ])
+    # 引用箭头：派生→根（关联标准）
+    ax.annotate("", xy=(6.0, 3.1), xytext=(8.0, 3.1),
+                arrowprops=dict(arrowstyle="-|>", color=C_PURPLE, lw=2.2))
+    ax.text(7.0, 3.45, "关联标准\n(引用根指标)", ha="center", va="center",
+            fontsize=10, color=C_PURPLE)
+    ax.set_title("根指标与派生指标：派生指标 = 根指标 + 维度 + 技术口径（回扣第12章 OneModel）",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.3_根指标与派生指标.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+def _card(ax, x, y, w, h, title, color, lines):
+    ax.add_patch(FancyBboxPatch((x, y), w, h,
+                 boxstyle="round,pad=0.02,rounding_size=0.1",
+                 fc="#FFFFFF", ec=color, lw=2))
+    ax.add_patch(FancyBboxPatch((x, y + h - 0.6), w, 0.6,
+                 boxstyle="round,pad=0.02,rounding_size=0.1",
+                 fc=color, ec="none"))
+    ax.text(x + w / 2, y + h - 0.3, title, ha="center", va="center",
+            fontsize=12.5, color="white", fontweight="normal")
+    ty = y + h - 1.05
+    for ln in lines:
+        ax.text(x + 0.25, ty, ln, ha="left", va="center", fontsize=10, color="#222222")
+        ty -= 0.5
+
+
+# ======================================================================
+# 4. 图3：账户维度树
+# ======================================================================
+def _layout(node, depth, leaf_counter, pos):
+    if "children" not in node or not node["children"]:
+        y = leaf_counter[0] * 0.62
+        leaf_counter[0] += 1
+        pos[id(node)] = (depth, y)
+        return y
+    ys = []
+    for c in node["children"]:
+        ys.append(_layout(c, depth + 1, leaf_counter, pos))
+    y = sum(ys) / len(ys)
+    pos[id(node)] = (depth, y)
+    return y
+
+
+def plot_dimension_tree():
+    pos = {}
+    _layout(DIM_TREE, 0, [0], pos)
+    max_depth = max(d for d, _ in pos.values())
+    n_leaves = max(y for _, y in pos.values()) / 0.62 + 1
+    dx = 2.7
+
+    fig, ax = plt.subplots(figsize=(15, max(7, n_leaves * 0.62 + 1)))
+    ax.set_xlim(-0.3, max_depth * dx + 3.6)
+    ax.set_ylim(-0.5, n_leaves * 0.62 + 0.5)
+    ax.axis("off")
+
+    # 连线
+    for node in _iter(DIM_TREE):
+        if "children" in node and node["children"]:
+            xd, yd = pos[id(node)]
+            for c in node["children"]:
+                xc, yc = pos[id(c)]
+                ax.plot([xd + 0.9, xc - 0.05], [yd, yc], color="#9AA5B1", lw=1.2, zorder=1)
+    # 节点
+    for node in _iter(DIM_TREE):
+        d, y = pos[id(node)]
+        x = d * dx
+        is_leaf = "children" not in node or not node["children"]
+        color = C_BLUE if d == 0 else (C_TEAL if is_leaf else C_GREEN)
+        w = 2.5 if not is_leaf else 3.1
+        ax.add_patch(FancyBboxPatch((x, y - 0.22), w, 0.44,
+                     boxstyle="round,pad=0.02,rounding_size=0.06",
+                     fc=color, ec="none", zorder=2))
+        ax.text(x + w / 2, y, node["name"], ha="center", va="center",
+                fontsize=10 if not is_leaf else 9.5,
+                color="white", zorder=3,
+                linespacing=1.2)
+
+    ax.set_title("账户维度树（维度树-账户维度）：账户 → 存款账户 → 个人存款账户 → … → 具体账户",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.3_账户维度树.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+def _iter(node):
+    yield node
+    for c in node.get("children", []):
+        yield from _iter(c)
+
+
+# ======================================================================
+# 5. 图4：维度体系总览（维度类型 + 维度值代码）
+# ======================================================================
+def plot_dimension_overview():
+    fig, ax = plt.subplots(figsize=(14, 5.2))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 5.4)
+    ax.axis("off")
+
+    # 左：维度定义（参与人类型）
+    ax.add_patch(FancyBboxPatch((0.4, 0.6), 6.0, 4.2,
+                 boxstyle="round,pad=0.02,rounding_size=0.1",
+                 fc="#F2F4F7", ec=C_BLUE, lw=1.6))
+    ax.text(3.4, 4.5, "维度定义（示例：参与人维度）", ha="center", va="center",
+            fontsize=12.5, color=C_BLUE, fontweight="normal")
+    y = 3.9
+    for code, typ, name in DIM_DEFS:
+        ax.text(0.7, y, f"{code}  [{typ}]  {name}", ha="left", va="center",
+                fontsize=10.5, color="#222222")
+        y -= 0.62
+
+    # 右：维度值代码定义
+    ax.add_patch(FancyBboxPatch((7.0, 0.6), 6.6, 4.2,
+                 boxstyle="round,pad=0.02,rounding_size=0.1",
+                 fc="#F2F4F7", ec=C_ORANGE, lw=1.6))
+    ax.text(10.3, 4.5, "维度值代码定义（AC0001 按对公账户活跃度）", ha="center", va="center",
+            fontsize=12, color=C_ORANGE, fontweight="normal")
+    y = 3.9
+    for code, dim, vcode, vname in DIM_VALUES:
+        ax.text(7.3, y, f"{vcode}  {vname}   （{dim}）", ha="left", va="center",
+                fontsize=10.5, color="#222222")
+        y -= 0.62
+
+    ax.set_title("维度体系：维度定义（维度编号/类型/名称）+ 维度值代码定义",
+                 fontweight="normal", pad=12)
+    p = os.path.join(OUT, "13.3_维度体系总览.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return p
+
+
+# ======================================================================
+# 6. 可运行：指标标准 + 维度树
+# ======================================================================
+class IndicatorStandard:
+    REQUIRED = ["编号", "中文名称", "指标类型", "技术口径"]
+
+    def __init__(self, **kw):
+        self.f = kw
+
+    def is_derived(self):
+        return self.f.get("指标类型") == "派生指标"
+
+    def validate(self):
+        miss = [k for k in self.REQUIRED if not self.f.get(k)]
+        if self.is_derived() and not self.f.get("关联标准"):
+            miss.append("关联标准(派生指标必填)")
+        return miss
+
+
+class DimensionTree:
+    def __init__(self, node):
+        self.root = node
+
+    def depth(self):
+        def d(n):
+            return 1 if not n.get("children") else 1 + max(d(c) for c in n["children"])
+        return d(self.root)
+
+    def leaves(self):
+        out = []
+        def walk(n):
+            if not n.get("children"):
+                out.append(n["name"])
+            else:
+                for c in n["children"]:
+                    walk(c)
+        walk(self.root)
+        return out
+
+
+# ======================================================================
+# 7. 主程序
+# ======================================================================
+def main():
+    g = IndicatorStandard(**IND_G)
+    p = IndicatorStandard(**IND_P)
+    print("DZ-G-014 校验:", g.validate(), "| 是否派生:", g.is_derived())
+    print("DZ-P-121 校验:", p.validate(), "| 是否派生:", p.is_derived())
+
+    tree = DimensionTree(DIM_TREE)
+    print(f"账户维度树：深度={tree.depth()}, 叶子(具体账户)={len(tree.leaves())} 个")
+    for name in tree.leaves():
+        print("   -", name)
+
+    paths = [plot_indicator_attr_model(), plot_root_derived(),
+             plot_dimension_tree(), plot_dimension_overview()]
+    print("\n图表已生成：")
+    for pp in paths:
+        print("  -", pp)
+    return paths
+
+
+if __name__ == "__main__" or True:
+    main()

@@ -1,0 +1,81 @@
+# -*- coding: utf-8 -*-
+"""
+第2章 数据分析方法 —— 2.17 PowerBI 函数练习：学生成绩分析 复现
+================================================================
+原教材实现：PowerBI（5、PowerBI基本操作/函数练习文件/学生考试案例/学生案例.pbix）
+本项目迁移：Python (pandas + matplotlib)
+
+【项目内涵理解】
+学生案例把“学生基本信息表”和“考试记录表”通过 学号 关联（横向合并/Join），
+再做成绩分析：各科平均分与分布、班级对比、性别差异、总分排名。
+"""
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------- 0. 路径配置 ----------
+CASE = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/5、PowerBI基本操作/函数练习文件/学生考试案例"
+SAVE_CHART = True
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+
+# ---------- 1. 读取并关联（横向合并 / Join） ----------
+stu = pd.read_excel(f"{CASE}/学生及老师信息.xlsx")
+score = pd.read_excel(f"{CASE}/考试记录.xlsx")
+df = stu.merge(score, on="学号", how="left")
+df["性别"] = df["性别(1男生,2女生)"].map({1: "男", 2: "女"})
+df["总分"] = df[["语文", "数学", "英语"]].sum(axis=1)
+df["平均分"] = df[["语文", "数学", "英语"]].mean(axis=1).round(1)
+
+print("【关联后前 5 行】")
+print(df[["学号", "姓名", "性别", "班级", "语文", "数学", "英语", "总分"]].head(5).to_string(index=False))
+print(f"学生总数 = {len(df)}\n")
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 2. 各科统计 ----------
+print("【各科统计】")
+print(df[["语文", "数学", "英语"]].describe().round(1).to_string())
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.boxplot([df["语文"], df["数学"], df["英语"]], tick_labels=["语文", "数学", "英语"])
+ax.set_title("三科成绩分布（箱线图）"); ax.set_ylabel("分数")
+plt.tight_layout()
+if SAVE_CHART:
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.savefig(os.path.join(CHART_DIR, "217a_三科分布.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 3. 班级对比 ----------
+cls = df.groupby("班级")[["语文", "数学", "英语", "平均分"]].mean().round(1)
+print("\n【各班平均分】")
+print(cls.to_string())
+fig, ax = plt.subplots(figsize=(7, 4.5))
+x = range(len(cls)); w = 0.25
+for i, sub in enumerate(["语文", "数学", "英语"]):
+    ax.bar([xi + (i - 1) * w for xi in x], cls[sub], width=w, label=sub)
+ax.set_xticks(list(x)); ax.set_xticklabels(cls.index)
+ax.set_title("各班三科平均分对比"); ax.set_ylabel("平均分"); ax.legend()
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "217b_班级对比.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ---------- 4. 性别差异 ----------
+gen = df.groupby("性别")[["语文", "数学", "英语", "平均分"]].mean().round(1)
+print("\n【性别平均分】"); print(gen.to_string())
+
+# ---------- 5. 总分排名 TOP10 ----------
+top = df.sort_values("总分", ascending=False).head(10)
+print("\n【总分 TOP10】")
+print(top[["学号", "姓名", "性别", "班级", "语文", "数学", "英语", "总分"]].to_string(index=False))
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.barh(top["姓名"][::-1], top["总分"][::-1], color="#4C78A8")
+ax.set_title("总分 TOP10"); ax.set_xlabel("总分")
+plt.tight_layout()
+if SAVE_CHART:
+    fig.savefig(os.path.join(CHART_DIR, "217c_总分TOP10.png"), dpi=150, bbox_inches="tight")
+plt.show()

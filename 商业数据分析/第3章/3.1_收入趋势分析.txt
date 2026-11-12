@@ -1,0 +1,184 @@
+# 3.1_收入趋势分析.py
+# ============================================================
+# 第3章 案例1：收入趋势分析 —— Python 复现
+# 作业要求：Power BI / Excel 分析 -> 理解项目内涵 -> 用 Python 实现
+#
+# 源数据：第3章 商业数据分析框架/案例1：收入趋势分析/
+#         案例1：收入趋势分析原始数据.xlsx
+# 完整案例(参考)：案例1：收入趋势分析案例-完整.xlsx
+#         含「业务需求 / 原始数据 / 准备区 / 报表界面」，
+#         报表界面最终呈现 5 张图（准备区为中间过程，二者图一致），复现这 5 张：
+#           ① 年度销售趋势分析              —— 折线图
+#           ② 2020 年月销售趋势分析          —— 折线图
+#           ③ 2020 年销售同比增长率趋势分析  —— 折线图
+#           ④ 2020 年 11 月各省份同比增长情况分析 —— 柱状图
+#           ⑤ 四川省 2020 年各月同比增长情况      —— 折线图
+#
+# 同比增长率口径（与教材一致）：(本期 - 上期) / 本期
+#         缺失的年份销售额按 0 处理；若本期为 0，则同比增长率记为 0
+# ============================================================
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+CHART_DIR = os.path.join(BASE_DIR, "charts")
+os.makedirs(CHART_DIR, exist_ok=True)
+
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# 教材原始数据路径（实际数据在桌面；Baidu 网盘路径仅供参考）
+DATA_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例1：收入趋势分析"
+# DATA_DIR = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第3章 商业数据分析框架/案例1：收入趋势分析"
+DATA_PATH = os.path.join(DATA_DIR, "案例1：收入趋势分析原始数据.xlsx")
+
+
+def load_data():
+    df = pd.read_excel(DATA_PATH)
+    df.columns = [str(c).strip() for c in df.columns]
+    df["订单年份"] = df["订单年份"].astype(int)
+    df["订单月份"] = df["订单月份"].astype(int)
+    df["销售额"] = pd.to_numeric(df["销售额"], errors="coerce")
+    return df
+
+
+def yoy(cur, prev):
+    """教材口径同比：本期、上期缺失按 0；本期为 0 时记 0"""
+    prev = 0.0 if pd.isna(prev) else float(prev)
+    cur = 0.0 if pd.isna(cur) else float(cur)
+    if cur == 0:
+        return 0.0
+    return (cur - prev) / cur
+
+
+def wan(x, pos=None):
+    return f"{x / 1e4:.0f}万"
+
+
+def main():
+    df = load_data()
+    print("原始数据: {} 行, 年份范围 {}-{}, 省份数 {}".format(
+        len(df), df["订单年份"].min(), df["订单年份"].max(), df["销售省份"].nunique()))
+
+    # ---------- ① 年度销售趋势分析（折线）----------
+    yearly = df.groupby("订单年份")["销售额"].sum().sort_index()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(yearly.index, yearly.values, marker="o", lw=2.5, color="#4C78A8")
+    for x, y in zip(yearly.index, yearly.values):
+        ax.text(x, y, f"{y / 1e4:.0f}万", ha="center", va="bottom", fontsize=9)
+    ax.set_title("年度销售趋势分析")
+    ax.set_xlabel("订单年份")
+    ax.set_ylabel("销售额（元）")
+    ax.yaxis.set_major_formatter(FuncFormatter(wan))
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/31a_年度销售趋势.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/31a_年度销售趋势.png")
+
+    # ---------- ② 2020 年月销售趋势分析（折线）----------
+    m2020 = (df[df["订单年份"] == 2020].groupby("订单月份")["销售额"].sum()
+             .reindex(range(1, 13), fill_value=0))
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(m2020.index, m2020.values, marker="o", lw=2.2, color="#4C78A8")
+    for x, y in zip(m2020.index, m2020.values):
+        ax.text(x, y, f"{y / 1e4:.0f}万", ha="center", va="bottom", fontsize=8)
+    ax.set_title("2020 年月销售趋势分析")
+    ax.set_xlabel("订单月份")
+    ax.set_ylabel("销售额（元）")
+    ax.set_xticks(range(1, 13))
+    ax.yaxis.set_major_formatter(FuncFormatter(wan))
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/31b_2020月度趋势.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/31b_2020月度趋势.png")
+
+    # ---------- ③ 2020 年销售同比增长率趋势分析（折线）----------
+    piv = (df.pivot_table(index="订单月份", columns="订单年份",
+                          values="销售额", aggfunc="sum")
+           .reindex(columns=[2019, 2020], fill_value=0)
+           .reindex(range(1, 13), fill_value=0))
+    yoy_month = [yoy(piv.loc[m, 2020], piv.loc[m, 2019]) for m in range(1, 13)]
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(range(1, 13), [v * 100 for v in yoy_month], marker="o", lw=2.2,
+            color="#E45756")
+    for x, v in zip(range(1, 13), yoy_month):
+        ax.text(x, v * 100, f"{v * 100:.0f}%", ha="center", va="bottom", fontsize=8)
+    ax.axhline(0, color="gray", lw=1)
+    ax.set_title("2020 年销售同比增长率趋势分析")
+    ax.set_xlabel("订单月份")
+    ax.set_ylabel("同比增长率（%）")
+    ax.set_xticks(range(1, 13))
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/31c_同比增长率趋势.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/31c_同比增长率趋势.png")
+
+    # ---------- ④ 2020 年 11 月各省份同比增长情况分析（柱状）----------
+    # 省份顺序与教材一致（按名称首字拼音）
+    prov_order = ['安徽', '北京', '福建', '甘肃', '广东', '广西', '贵州', '河北', '河南',
+                  '黑龙江', '湖北', '湖南', '吉林', '江苏', '江西', '辽宁', '内蒙古',
+                  '宁夏', '青海', '山东', '山西', '陕西', '上海', '四川', '天津',
+                  '西藏自治区', '新疆', '云南', '浙江', '重庆']
+    nov = df[df["订单月份"] == 11]
+    npiv = (nov.pivot_table(index="销售省份", columns="订单年份",
+                            values="销售额", aggfunc="sum")
+            .reindex(columns=[2019, 2020], fill_value=0))
+    prov_yoy = []
+    for p in prov_order:
+        if p in npiv.index:
+            c = npiv.loc[p, 2020]
+            b = npiv.loc[p, 2019]
+            prov_yoy.append(yoy(c, b))
+        else:
+            prov_yoy.append(0.0)
+    fig, ax = plt.subplots(figsize=(14, 6))
+    colors = ["#E45756" if v < 0 else "#4C78A8" for v in prov_yoy]
+    ax.bar(range(len(prov_order)), [v * 100 for v in prov_yoy], color=colors)
+    ax.set_xticks(range(len(prov_order)))
+    ax.set_xticklabels(prov_order, rotation=60, ha="right", fontsize=8)
+    ax.axhline(0, color="gray", lw=1)
+    ax.set_title("2020 年 11 月各省份同比增长情况分析")
+    ax.set_ylabel("同比增长率（%）")
+    fig.savefig(f"{CHART_DIR}/31d_11月各省同比.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/31d_11月各省同比.png")
+
+    # ---------- ⑤ 四川省 2020 年各月同比增长情况（折线）----------
+    sc = df[df["销售省份"] == "四川"]
+    scpiv = (sc.pivot_table(index="订单月份", columns="订单年份",
+                            values="销售额", aggfunc="sum")
+             .reindex(columns=[2019, 2020], fill_value=0)
+             .reindex(range(1, 13), fill_value=0))
+    sc_yoy = [yoy(scpiv.loc[m, 2020], scpiv.loc[m, 2019]) for m in range(1, 13)]
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(range(1, 13), [v * 100 for v in sc_yoy], marker="o", lw=2.2,
+            color="#54A24B")
+    for x, v in zip(range(1, 13), sc_yoy):
+        ax.text(x, v * 100, f"{v * 100:.0f}%", ha="center", va="bottom", fontsize=8)
+    ax.axhline(0, color="gray", lw=1)
+    ax.set_title("四川省 2020 年各月同比增长情况")
+    ax.set_xlabel("订单月份")
+    ax.set_ylabel("同比增长率（%）")
+    ax.set_xticks(range(1, 13))
+    ax.grid(axis="y", ls=":", alpha=0.5)
+    fig.savefig(f"{CHART_DIR}/31e_四川各月同比.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("图表已存:", f"{CHART_DIR}/31e_四川各月同比.png")
+
+    # 核对：打印关键数值，便于与教材准备区对照
+    print("\n[核对] 年度销售趋势(元):", yearly.to_dict())
+    print("[核对] 2020 年 11 月各省同比(%):")
+    for p, v in zip(prov_order, prov_yoy):
+        print("   {}: {:.2f}".format(p, v * 100))
+
+    print("\n案例1（收入趋势分析）5 张图已全部生成，位于:", CHART_DIR)
+
+
+if __name__ == "__main__":
+    main()

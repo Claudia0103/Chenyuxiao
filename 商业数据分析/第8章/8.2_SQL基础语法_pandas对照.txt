@@ -1,0 +1,290 @@
+# 8.2_SQL基础语法_pandas对照.py
+# ============================================================
+# 第8章 SQL语言基础与MySQL入门 —— Python 复现（二）
+# 对应教材：SQL基础语法.sql（SQL1 ~ SQL9 共 9 类语法例题）
+#
+# 做法：每条教材 SQL 原样保留，下面写一句等价的 pandas，在教材给的同一批
+#       KDD99 银行 CSV 上跑出结果。这样不用装 MySQL 也能逐条核对理解对不对。
+#
+# 项目内涵：SQL 是按「列 -> 行 -> 分组 -> 表间关系」的顺序描述要什么数据，
+# pandas 是按「选列 -> 布尔筛选 -> groupby -> merge」操作 DataFrame，
+# 两边一一对应：
+#   SELECT 列            -> df[["a","b"]]
+#   DISTINCT             -> drop_duplicates()
+#   WHERE                -> df[条件]
+#   ORDER BY             -> sort_values()
+#   表达式/CASE WHEN     -> assign / np.select / map
+#   GROUP BY + HAVING    -> groupby.agg + 再筛一次
+#   JOIN                 -> merge(how=...)
+#   IN (子查询)          -> isin()
+#   UNION / UNION ALL    -> concat + drop_duplicates / 直接 concat
+#   CREATE TABLE AS      -> 存一份 DataFrame 快照
+#   CREATE VIEW          -> 写个函数，每次调用重新读
+#
+# 【参数】TRANS_NROWS 默认 None = 读全量 105 万行 trans（SQL5 的 HAVING>300 要有全量才有结果）。
+#        只想快速冒烟就改成 200000，但部分例题会查不到 1998 年的数据。
+# ============================================================
+
+import os
+import numpy as np
+import pandas as pd
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # 作为 .py 文件运行时
+except NameError:
+    BASE_DIR = os.getcwd()                                  # 在 Jupyter 里粘贴运行时
+
+CHAPTER_DIR = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第8章 SQL语言基础与Mysql入门"
+CSV_DIR = os.path.join(CHAPTER_DIR, "1、Windows系统下将数据导入到MySQL的三种方法",
+                       "方式1", "mysql_csv")
+
+TRANS_NROWS = None
+NON_EQ_LOANS = 20          # 非等值连接演示用前 20 笔贷款，全量会非常大
+DATE_FROM, DATE_TO = "1998-12-01", "1998-12-31"
+
+# 只需要这 9 张表；列名顺序照抄 1 create_table.sql，CSV 无表头
+SPEC = {
+    "sale": (["year", "market", "sale", "profit"], "sale.csv"),
+    "One": (["x", "a"], "One.csv"),
+    "two": (["x", "b"], "two.csv"),
+    "Table1": (["id", "a"], "Table1.csv"),
+    "Table2": (["id", "b"], "Table2.csv"),
+    "Kdd99_card": (["card_id", "disp_id", "issued", "type"], "Kdd99_card.csv"),
+    "Kdd99_disp": (["disp_id", "client_id", "account_id", "type"], "Kdd99_disp.csv"),
+    "Kdd99_clients": (["client_id", "sex", "birth_date", "district_id"], "Kdd99_clients.csv"),
+    "Kdd99_loans": (["loan_id", "account_id", "date", "amount", "duration", "payments", "status"],
+                    "Kdd99_loans.csv"),
+    "Kdd99_trans": (["trans_id", "account_id", "date", "type", "operation", "amount",
+                     "balance", "k_symbol", "bank", "account"], "Kdd99_trans.csv"),
+}
+
+
+def read_csv_auto(path, columns, nrows=None):
+    """先试 UTF-8 再退 GB18030，顺序反过来会把 UTF-8 文件读成乱码（且不报错）。"""
+    last_err = None
+    for enc in ("utf-8-sig", "gb18030", "gbk", "latin-1"):
+        try:
+            return pd.read_csv(path, header=None, names=columns, encoding=enc,
+                               nrows=nrows, skipinitialspace=True), enc
+        except UnicodeDecodeError as e:
+            last_err = e
+    raise RuntimeError("所有编码都读不了 {}: {}".format(path, last_err))
+
+
+def load_tables():
+    t = {}
+    for name, (cols, fname) in SPEC.items():
+        path = os.path.join(CSV_DIR, fname)
+        nrows = TRANS_NROWS if name == "Kdd99_trans" else None
+        df, enc = read_csv_auto(path, cols, nrows=nrows)
+        # trans 例题只用到 6 列，读进来后再裁掉，省后面 groupby/merge 的内存
+        if name == "Kdd99_trans":
+            df = df[["trans_id", "account_id", "date", "amount", "k_symbol", "bank"]]
+        t[name] = df
+        print("  载入 {:<14} {:>9,} 行  enc={}".format(name, len(df), enc))
+    return t
+
+
+def show(title, sql, result, n=5):
+    """每条例题统一输出：SQL 原文 + pandas 结果。"""
+    print("\n" + "-" * 78)
+    print("【{}】".format(title))
+    print("  SQL    :", " ".join(sql.split()))
+    if isinstance(result, pd.DataFrame):
+        print("  pandas : {} 行 × {} 列，前 {} 行".format(len(result), result.shape[1], min(n, len(result))))
+        print(result.head(n).to_string(index=False))
+    elif isinstance(result, pd.Series):
+        print("  pandas : Series, {} 个".format(len(result)))
+        print(result.head(n).to_string())
+    else:
+        print("  pandas :", result)
+    return result
+
+
+def main():
+    if not os.path.isdir(CSV_DIR):
+        raise FileNotFoundError("教材数据目录不存在：\n" + CSV_DIR)
+
+    print("=" * 78)
+    print("载入教材 KDD99 CSV")
+    print("=" * 78)
+    t = load_tables()
+    sale = t["sale"]
+
+    # ---------------- SQL2 数据过滤与排序 ----------------
+    print("\n" + "=" * 78)
+    print("SQL2  数据过滤与排序")
+    print("=" * 78)
+    show("SQL2-1 选择指定列", "select year,market,sale,profit from kdd99.sale;",
+         sale[["year", "market", "sale", "profit"]])
+    show("SQL2-2 选择所有列", "select * from kdd99.sale;", sale)
+    show("SQL2-3 去重", "select DISTINCT year from kdd99.sale;",
+         sale[["year"]].drop_duplicates())
+    show("SQL2-4 条件筛选", "select * from kdd99.sale where year=2012;",
+         sale[sale["year"] == 2012])
+    show("SQL2-5 排序", "select year,market,sale,profit from kdd99.sale order by year;",
+         sale[["year", "market", "sale", "profit"]].sort_values("year"))
+
+    tr = t["Kdd99_trans"]
+    sql_case2 = ("SELECT t1.account_id, t1.date, t1.bank, t1.amount "
+                 "FROM KDD99.KDD99_TRANS t1 "
+                 "WHERE t1.date BETWEEN '1998-12-01' AND '1998-12-31' "
+                 "AND t1.k_symbol = '房屋贷款' ORDER BY t1.date, t1.account_id;")
+    m = tr[tr["date"].between(DATE_FROM, DATE_TO) & (tr["k_symbol"] == "房屋贷款")]
+    case2 = m[["account_id", "date", "bank", "amount"]].sort_values(["date", "account_id"])
+    show("SQL2-6 单表查询案例（1998年12月 房屋贷款）", sql_case2, case2)
+    print("  -> 命中 {} 行".format(len(case2)))
+
+    # ---------------- SQL3 表达式创建新列 ----------------
+    print("\n" + "=" * 78)
+    print("SQL3  用表达式创建新列")
+    print("=" * 78)
+    rate = sale.assign(rate=sale["profit"] / sale["sale"])
+    show("SQL3-1 利润率", "select profit/sale as rate from kdd99.sale;", rate[["rate"]])
+    show("SQL3-2 用计算值筛选", "select profit/sale as rate from kdd99.sale where profit/sale < 0.07;",
+         rate[rate["rate"] < 0.07][["rate"]])
+
+    # MySQL weekday(): 0=周一 ... 6=周日，和 pandas dt.weekday 完全一致
+    wd = case2.copy()
+    wd["weekday"] = pd.to_datetime(wd["date"]).dt.weekday
+    show("SQL3-3 weekday(date) 新列",
+         "SELECT ..., weekday(t1.date) as weekday FROM KDD99.KDD99_TRANS t1 ...", wd)
+
+    # ---------------- SQL4 对列重编码（三种 CASE 写法） ----------------
+    print("\n" + "=" * 78)
+    print("SQL4  对列重编码 CASE WHEN")
+    print("=" * 78)
+    w = wd["weekday"]
+    v1 = np.select([w == 5, w == 6, w.between(0, 4)], ["周末", "周末", "工作日"], default="未知")
+    v2 = w.map({0: "工作日", 1: "工作日", 2: "工作日", 3: "工作日", 4: "工作日",
+                5: "周末", 6: "周末"})
+    v3 = np.where(w.isin([5, 6]), "周末", "工作日")
+    enc = wd.assign(写法1_搜索CASE=v1, 写法2_简单CASE=v2, 写法3_ELSE=v3)
+    show("SQL4 三种 CASE 写法结果并排",
+         "CASE WHEN 5=weekday(date) THEN '周末' ... END / CASE weekday(date) WHEN 5 THEN ... ELSE ... END",
+         enc[["date", "weekday", "写法1_搜索CASE", "写法2_简单CASE", "写法3_ELSE"]])
+    same = bool((enc["写法1_搜索CASE"] == enc["写法2_简单CASE"]).all()
+                and (enc["写法2_简单CASE"] == enc["写法3_ELSE"]).all())
+    print("  -> 三种写法结果一致：{}（周末 {} 行 / 工作日 {} 行）".format(
+        same, (v3 == "周末").sum(), (v3 == "工作日").sum()))
+
+    # ---------------- SQL5 分组与汇总 ----------------
+    print("\n" + "=" * 78)
+    print("SQL5  对数据分组和汇总")
+    print("=" * 78)
+    sql5 = ("SELECT t1.date, COUNT(t1.account_id) AS COUNT_of_account_id, "
+            "avg(t1.amount) AS MEAN_of_amount, SUM(t1.amount) AS SUM_of_amount "
+            "FROM KDD99.KDD99_TRANS t1 GROUP BY t1.date HAVING COUNT_of_account_id > 300;")
+    g = tr.groupby("date", as_index=False).agg(
+        COUNT_of_account_id=("account_id", "count"),
+        MEAN_of_amount=("amount", "mean"),
+        SUM_of_amount=("amount", "sum"))
+    g = g[g["COUNT_of_account_id"] > 300].sort_values("date")
+    show("SQL5 GROUP BY + HAVING", sql5, g)
+    print("  -> 满足 HAVING > 300 的日期共 {} 天".format(len(g)))
+
+    # ---------------- SQL6 横向连接 ----------------
+    print("\n" + "=" * 78)
+    print("SQL6  横向连接表")
+    print("=" * 78)
+    t1, t2 = t["Table1"], t["Table2"]
+    cross = t1.assign(_k=1).merge(t2.assign(_k=1), on="_k").drop(columns="_k")
+    show("SQL6-1 笛卡尔积", "select * from kdd99.table1, kdd99.table2;", cross)
+    show("SQL6-2 内连接", "select * from table1, table2 where table1.id = table2.id;",
+         t1.merge(t2, on="id", how="inner"))
+    show("SQL6-3 左连接", "select * from Table1 left join Table2 on Table1.id = Table2.id;",
+         t1.merge(t2, on="id", how="left"))
+    show("SQL6-4 右连接", "select * from Table1 right join Table2 on Table1.id = Table2.id;",
+         t1.merge(t2, on="id", how="right"))
+    show("SQL6-5 全连接（MySQL 不支持，Python 可以）",
+         "select * from Table1 full join Table2 on Table1.id = Table2.id;  -- MySQL 会报错",
+         t1.merge(t2, on="id", how="outer"))
+
+    cards = (t["Kdd99_card"]
+             .merge(t["Kdd99_disp"], on="disp_id", how="left", suffixes=("", "_disp"))
+             .merge(t["Kdd99_clients"], on="client_id", how="left"))
+    sql6_biz = ("SELECT t1.card_id, t1.disp_id, t1.issued, t1.type, t3.sex, "
+                "t3.birth_date, t3.district_id FROM KDD99_CARD t1 "
+                "LEFT JOIN KDD99_DISP t2 ON t1.disp_id = t2.disp_id "
+                "LEFT JOIN KDD99_CLIENTS t3 ON t2.client_id = t3.client_id;")
+    show("SQL6-6 商业问题：卡 -> 权限 -> 客户 三表左连接", sql6_biz,
+         cards[["card_id", "disp_id", "issued", "type", "sex", "birth_date", "district_id"]])
+    print("  -> 卡 {} 张，连完 {} 行".format(len(t["Kdd99_card"]), len(cards)))
+
+    # 非等值连接：贷款发放日之前 365 天内的同账户交易
+    loans = t["Kdd99_loans"]
+    l = loans.head(NON_EQ_LOANS).copy()
+    l["date_dt"] = pd.to_datetime(l["date"])
+    tr_sub = tr[tr["account_id"].isin(l["account_id"])].copy()
+    tr_sub["date_dt"] = pd.to_datetime(tr_sub["date"])
+    j = l.merge(tr_sub, on="account_id", how="left", suffixes=("", "_t"))
+    hit = (j["date_dt"] > j["date_dt_t"]) & (
+        j["date_dt"] <= j["date_dt_t"] + pd.Timedelta(days=365))
+    non_eq = j[hit | j["date_dt_t"].isna()]
+    print("\n" + "-" * 78)
+    print("【SQL6-7 非等值横向连接】")
+    print("  SQL    : FROM LOANS t1 LEFT JOIN TRANS t2 ON t1.account_id=t2.account_id "
+          "AND t1.date>t2.date AND t1.date<=t2.date+365")
+    print("  pandas : 先按 account_id merge，再用日期不等式过滤（等价于 ON 里带条件）")
+    print("  -> 取前 {} 笔贷款演示，命中 {} 行；全量会非常大".format(NON_EQ_LOANS, len(non_eq)))
+
+    # ---------------- SQL7 子查询 ----------------
+    print("\n" + "=" * 78)
+    print("SQL7  子查询")
+    print("=" * 78)
+    bad_ids = loans[loans["status"] == "B"]["account_id"]
+    all_loan = tr[tr["account_id"].isin(bad_ids)].sort_values("account_id")
+    print("\n" + "-" * 78)
+    print("【SQL7-1 IN 子查询：违约客户的所有交易】")
+    print("  SQL    : create table all_loan as select * from kdd99_trans "
+          "where account_id in (select account_id from loans where status='B') order by account_id;")
+    print("  pandas : tr[tr['account_id'].isin(bad_ids)].sort_values('account_id')")
+    print("  -> 违约账户 {} 个，交易 {} 行".format(bad_ids.nunique(), len(all_loan)))
+
+    bad_loans = loans[loans["status"] == "B"][["account_id", "date"]].rename(
+        columns={"date": "loan_date"})
+    rel = tr.merge(bad_loans, on="account_id", how="inner")
+    before = rel[rel["date"] < rel["loan_date"]].sort_values("account_id")
+    print("\n" + "-" * 78)
+    print("【SQL7-2 相关子查询：违约客户「贷款发放之前」的交易】")
+    print("  SQL    : where account_id in (select account_id from loans a "
+          "where status='B' and b.date < a.date)")
+    print("  pandas : 先把违约贷款的日期 merge 到交易上，再筛 tr.date < loan_date")
+    print("  -> 命中 {} 行".format(len(before)))
+
+    # ---------------- SQL8 集合操作 ----------------
+    print("\n" + "=" * 78)
+    print("SQL8  集合操作")
+    print("=" * 78)
+    one, two = t["One"], t["two"]
+    # MySQL 的 UNION 两个输入必须列数相同，结果列名由**左输入**决定。
+    # two 的第二列叫 b，对齐成 one 的 a 再拼；直接 concat 会多出一列 NaN，语义就不对了。
+    two_aligned = two.rename(columns=dict(zip(two.columns, one.columns)))
+    show("SQL8-1 UNION（去重）", "select * from one UNION select * from two;",
+         pd.concat([one, two_aligned], ignore_index=True).drop_duplicates())
+    show("SQL8-2 UNION ALL（不去重）", "select * from one UNION all select * from two;",
+         pd.concat([one, two_aligned], ignore_index=True))
+    print("  -> MySQL 不支持 INTERSECT / EXCEPT；pandas 里可用 merge(how='inner') / isin 取反代替")
+
+    # ---------------- SQL9 生成表和视图 ----------------
+    print("\n" + "=" * 78)
+    print("SQL9  生成表和视图")
+    print("=" * 78)
+    test1 = sale[sale["year"].isin([2010, 2011])].copy()      # CREATE TABLE test1 AS ...
+
+    def view_aa():                                            # CREATE VIEW aa AS ...
+        return sale.copy()
+
+    show("SQL9-1 CREATE TABLE test1 AS（物化快照）",
+         "create table test1 as select * from sale where year in (2010,2011);", test1)
+    show("SQL9-2 CREATE VIEW aa AS（每次查询重新取数）",
+         "create view aa as select * from sale;", view_aa())
+    print("  -> 表是快照，改了源数据 test1 不变；视图是查询，view_aa() 每次拿到最新 sale")
+
+    print("\n" + "=" * 78)
+    print("8.2 完成：SQL1~SQL9 全部在教材真实 CSV 上跑通")
+    print("  提示：SQL1 只是「数据查询与 SQL 语言简介」的标题，教材里没有对应语句。")
+
+
+if __name__ == "__main__":
+    main()

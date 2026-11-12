@@ -1,0 +1,69 @@
+# ===== 第2章 2.4 同期群分析（Cohort）复现 =====
+# 原实现：Excel (1、分析的基础范式/data-有答案/1-4同期群分析-参考.xlsx)
+# 迁移：Python (pandas + seaborn 热力图)
+# 【项目内涵理解】
+#   同期群分析 = 按"注册日期"把用户分群(cohort)，观察每个群在注册后第 N 日的留存：
+#     留存率 = 第 N 日仍登录的用户数 / 该 cohort 的注册用户数（教材: 留存率=留存用户数/新增用户数）
+#   同时输出"每日注册用户数 + 环比增长"和"每日登录用户数"两类趋势。
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+XLSX = r"C:/Users/LENOVO/Desktop/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-4同期群分析-参考.xlsx"
+# XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第2章 数据分析方法/1、分析的基础范式/data-有答案/1-4同期群分析-参考.xlsx"
+CHART_DIR = "charts"
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# ① 读登录明细
+d = pd.read_excel(XLSX, sheet_name="用户登录明细", header=0)
+d.columns = d.columns.str.strip()
+d["注册日期"] = pd.to_datetime(d["注册日期"]).dt.normalize()
+d["登录日期"] = pd.to_datetime(d["登录日期"]).dt.normalize()
+
+# ② 每日注册用户数（去重用户）+ 环比
+reg = d.drop_duplicates("用户编号")[["用户编号", "注册日期"]]
+reg_n = reg.groupby("注册日期").size().rename("注册用户数")
+reg_n = reg_n.sort_index()
+growth = reg_n.pct_change().rename("环比增长")
+print("【每日注册用户数（前5）】")
+print(pd.concat([reg_n, growth], axis=1).head().round(4).to_string())
+
+# ③ 每日登录用户数
+login_n = d.groupby("登录日期")["用户编号"].nunique().rename("登录用户数").sort_index()
+print("\n【每日登录用户数（前5）】")
+print(login_n.head().to_string())
+
+# ④ 留存率矩阵
+cohort = reg.set_index("用户编号")["注册日期"]
+d["cohort"] = d["用户编号"].map(cohort)
+d["第几日"] = (d["登录日期"] - d["cohort"]).dt.days
+d_unique = d.drop_duplicates(["用户编号", "第几日"])
+piv = d_unique.pivot_table(index="cohort", columns="第几日",
+                           values="用户编号", aggfunc="nunique", fill_value=0)
+retention = (piv.div(reg_n, axis=0) * 100).round(1)   # 留存率%
+print("\n【留存率矩阵% (前2 cohort, 第0~5日)】")
+print(retention.iloc[:2, :6].to_string())
+
+# ⑤ 可视化：注册用户数趋势 + 留存热力图
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(reg_n.index, reg_n.values, marker="o", color="#4C78A8")
+ax.set_title("每日注册用户数"); ax.tick_params(axis="x", rotation=45)
+fig.savefig(f"{CHART_DIR}/24a_注册用户数.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+
+# 热力图（取前 14 天、前 12 个 cohort 便于观察）
+sub = retention.iloc[:12, :14]
+fig, ax = plt.subplots(figsize=(10, 5))
+im = ax.imshow(sub.values, aspect="auto", cmap="YlGnBu")
+ax.set_xticks(range(sub.shape[1])); ax.set_xticklabels(sub.columns)
+ax.set_yticks(range(sub.shape[0])); ax.set_yticklabels(sub.index.strftime("%m-%d"))
+ax.set_xlabel("注册后第几日"); ax.set_ylabel("注册日期(cohort)")
+ax.set_title("同期群留存率热力图 (%)")
+fig.colorbar(im, ax=ax, label="留存率%")
+fig.savefig(f"{CHART_DIR}/24b_留存热力图.png", dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n图表已存: {CHART_DIR}/24a_注册用户数.png, 24b_留存热力图.png")

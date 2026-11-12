@@ -1,0 +1,46 @@
+# ===== 第1章 Part1：维度模型演示（商场销售数据表）复现 =====
+# 原实现：Power BI (商场销售数据表.pbix)；此处迁移为 Python
+# 内涵：星型模型 = 事实表(产品销售数据表) + 维度表(品牌/类别/城市/日期/产品)
+import pandas as pd
+
+XLSX = r"D:/BaiduNetdiskDownload/CDA 教材资料2025/1《CDA 一级认证教材：商业数据分析》/第1章 数据分析思维/维度模型演示/商场销售数据表.xlsx"
+
+brand   = pd.read_excel(XLSX, sheet_name="品牌")
+cat     = pd.read_excel(XLSX, sheet_name="类别")
+city    = pd.read_excel(XLSX, sheet_name="商铺城市")
+product = pd.read_excel(XLSX, sheet_name="产品信息表")
+fact    = pd.read_excel(XLSX, sheet_name="产品销售数据表")
+date    = pd.read_excel(XLSX, sheet_name="日期表")
+
+# ① 去表头隐藏空格（原表 ' 销售单价' 前有空格）
+for df in (brand, cat, city, product, fact, date):
+    df.columns = df.columns.str.strip()
+
+# ② 统一产品编号大小写（事实表 a001 / 信息表 A001）
+fact["产品编号"] = fact["产品编号"].str.upper()
+product["产品编号"] = product["产品编号"].str.upper()
+
+# ③ 建星型关联（等价于 PB 的"管理关系"）
+fact = fact.merge(product[["产品编号", "采购单价"]], on="产品编号", how="left")
+fact["毛利"] = (fact["销售单价"] - fact["采购单价"]) * fact["销售数量"]
+fact["订单日期"] = pd.to_datetime(fact["订单日期"])
+fact = fact.merge(date, left_on="订单日期", right_on="日期", how="left")
+
+# —— 分析（对应 PB 报表视觉对象）——
+print("【各产品类别】\n",
+      fact.groupby("产品类别").agg(销售额=("销售额","sum"), 销量=("销售数量","sum"),
+                                   毛利=("毛利","sum")).sort_values("销售额", ascending=False), "\n")
+print("【各城市销售额】\n",
+      fact.groupby("商铺城市")["销售额"].sum().sort_values(ascending=False), "\n")
+print("【各品牌销售额】\n",
+      fact.groupby("品牌名称")["销售额"].sum().sort_values(ascending=False), "\n")
+print("【年-季度趋势】\n",
+      fact.groupby(["年度","季度"])["销售额"].sum().reset_index(), "\n")
+print("【产品毛利 Top10】\n",
+      fact.groupby("产品名称")["毛利"].sum().sort_values(ascending=False).head(10), "\n")
+print("【类别×城市 销售额矩阵】\n",
+      pd.pivot_table(fact, values="销售额", index="产品类别",
+                     columns="商铺城市", aggfunc="sum", fill_value=0), "\n")
+print("【整体指标】")
+print(f"  总销售额:{fact['销售额'].sum():,.0f}  总销量:{fact['销售数量'].sum():,.0f}  "
+      f"总毛利:{fact['毛利'].sum():,.0f}  平均单价:{fact['销售额'].sum()/fact['销售数量'].sum():,.1f}")
