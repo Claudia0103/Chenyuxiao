@@ -1,0 +1,299 @@
+# -*- coding: utf-8 -*-
+"""
+第4章 数据处理(pandas) —— 由教材《第4章 数据整合和数据清洗.ipynb》整理成 .py
+======================================================================
+教材 notebook 是 94 个代码格子，靠 Jupyter 的"最后一个表达式自动显示"看结果。
+这里按知识点归成 12 个小节，每节用 show() 打印，任何 Python 环境都能直接跑。
+
+知识点：读取参数(usecols/nrows/chunksize/na_values)、行列操作、条件查询、
+横向连接、纵向合并、排序、分组汇总、透视表、赋值与条件赋值、
+重复值、缺失值、噪声值(盖帽法)与分箱。
+
+数据：data/sample.csv、data/big.csv、data/write.csv（教材原文件的副本）。
+运行：整份代码粘进 Jupyter 一个 cell 也能跑；__file__ 不存在时按当前目录找 data/。
+"""
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+plt.rcParams["font.sans-serif"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---- 定位章节目录（整段粘进 Jupyter 单个 cell 也能用）----
+# cell 里没有 __file__；若直接退回 os.getcwd()，cwd=C://Users//LENOVO 时
+# 会把 data/ 拼成 C://Users//LENOVO//data（该目录恰好存在）而读不到教材数据。
+CHAPTER_DIR = ""       # 要手动指定时，填章节目录的绝对路径
+_EXPECTED = ('big.csv', 'sample.csv')   # 该脚本会用到的 data/ 下的文件或子目录
+
+def _locate_chapter_dir():
+    if CHAPTER_DIR:
+        return CHAPTER_DIR
+    # 交付目录的准确路径优先，避免命中同名的其它 data/ 目录
+    hardcoded = r"C:\Users\LENOVO\WorkBuddy\2026-10-22-09-53-30\量化策略分析复现\第4章-数据处理pandas"
+    if os.path.isdir(os.path.join(hardcoded, "data")):
+        return hardcoded
+    roots = []
+    if "__file__" in globals():
+        roots.append(os.path.dirname(os.path.abspath(__file__)))
+    roots += [os.getcwd(),
+              os.path.join(os.getcwd(), '第4章-数据处理pandas'),
+              os.path.join(os.getcwd(), '量化策略分析复现', '第4章-数据处理pandas')]
+    for r in roots:
+        d = os.path.join(r, "data")
+        if not os.path.isdir(d):
+            continue
+        if _EXPECTED and not any(os.path.exists(os.path.join(d, x)) or
+                                 any(os.path.exists(os.path.join(d, s, x))
+                                     for s in os.listdir(d)
+                                     if os.path.isdir(os.path.join(d, s)))
+                                 for x in _EXPECTED):
+            continue
+        return r
+    return os.getcwd()
+
+_HERE = _locate_chapter_dir()
+DATA = os.path.join(_HERE, "data")
+CHARTS = os.path.join(_HERE, "charts")
+os.makedirs(CHARTS, exist_ok=True)
+
+
+def show(title, obj):
+    """替代 notebook 的自动显示：打印标题和结果。"""
+    print("\n" + "=" * 12 + " " + str(title) + " " + "=" * 12)
+    print(obj)
+
+
+# ---------------------------------------------------------------- 1 读取
+def demo_read():
+    show("1.1 原始 sample.csv", pd.read_csv(os.path.join(DATA, "sample.csv")))
+    show("1.2 usecols 只读两列 + nrows 只读两行",
+         pd.read_csv(os.path.join(DATA, "sample.csv"),
+                     usecols=["id", "name"], nrows=2))
+
+    chunks = pd.read_csv(os.path.join(DATA, "big.csv"), chunksize=900)
+    shapes = [c.shape for c in chunks]
+    show("1.3 分块读取 big.csv：每块形状", shapes)
+    chunks2 = pd.read_csv(os.path.join(DATA, "big.csv"), chunksize=900)
+    big = pd.concat(chunks2, ignore_index=True)
+    show("1.4 分块拼接后的整体形状", big.shape)
+
+    show("1.5 na_values 把 99999 当缺失",
+         pd.read_csv(os.path.join(DATA, "sample.csv"), na_values="99999"))
+    out = os.path.join(CHARTS, "write_输出.csv")
+    pd.read_csv(os.path.join(DATA, "sample.csv"), encoding="utf-8").to_csv(
+        out, encoding="utf-8", index=False)
+    print(f"1.6 to_csv 演示结果写到：{out}（不覆盖教材原文件）")
+
+
+# ---------------------------------------------------------------- 2 行列
+def demo_rowcol():
+    np.random.seed(0)
+    s = pd.DataFrame(np.random.randn(4, 5), columns=list("abcde"))
+    show("2.1 生成的示例数据", s.round(3))
+    show("2.2 sample['a']", s["a"].round(3))
+    show("2.3 iloc[:,0] 与 loc[:,'a']", s.iloc[:, 0].round(3))
+    show("2.4 sample[['a']]（注意是 DataFrame）", s[["a"]].round(3))
+    show("2.5 loc[:1,:'b']", s.loc[:1, :"b"].round(3))
+    show("2.6 iloc[0:2,0:2]", s.iloc[0:2, 0:2].round(3))
+
+    t = s.copy()
+    t["new_col"] = t["a"] - t["b"]
+    show("2.7 直接赋值新增列", t.round(3))
+    show("2.8 assign 一次加两列",
+         s.assign(new_col2=s["a"] - s["b"], new_col3=s["a"] + s["b"]).round(3))
+    show("2.9 drop(columns='a')", s.drop(columns="a").round(3))
+    show("2.10 drop 多列", s.drop(columns=["a", "b"]).round(3))
+
+
+# ---------------------------------------------------------------- 3 查询
+def demo_query():
+    s = pd.DataFrame({"group": [1, 1, 1, 2, 1, 2],
+                      "name": ["Bob", "Lindy", "Mark", "Miki", "Sully", "Rose"],
+                      "score": [98, 78, 87, 77, 65, 67]})
+    show("3.1 布尔条件 score>70", s.score > 70)
+    show("3.2 布尔索引", s[s.score > 70])
+    show("3.3 且 &", s[(s.score > 70) & (s.group == 1)])
+    show("3.4 非 ~", s[~(s.group == 1)])
+    show("3.5 或 |", s[(s.group == 2) | (s.group == 1)])
+    show("3.6 query('score > 90')", s.query("score > 90"))
+    show("3.7 query 带逻辑", s.query("(group == 2) | (group == 1)"))
+    show("3.8 between(70,80, inclusive='both')",
+         s[s["score"].between(70, 80, inclusive="both")])
+    show("3.9 isin", s[s["name"].isin(["Bob", "Lindy"])])
+    show("3.10 str.contains 正则 [M]+", s[s["name"].str.contains("[M]+")])
+
+
+# ---------------------------------------------------------------- 4 横向连接
+def demo_merge():
+    d1 = pd.DataFrame({"col1": ["a", "b", "c"], "id": [1, 2, 3]})
+    d2 = pd.DataFrame({"col2": ["d", "e"], "id": [4, 3]})
+    show("4.1 左表 / 右表", "d1=\n" + str(d1) + "\nd2=\n" + str(d2))
+    for how in ("inner", "left", "right", "outer"):
+        show(f"4.2 merge how='{how}'", d1.merge(d2, how=how, on="id"))
+
+    a = pd.DataFrame({"id1": [1, 2, 3], "col1": ["a", "b", "c"]}, index=[1, 2, 3])
+    b = pd.DataFrame({"id2": [1, 2, 3], "col2": ["aa", "bb", "cc"]}, index=[1, 3, 2])
+    show("4.3 concat(axis=1) 按索引对齐", pd.concat([a, b], axis=1))
+    show("4.4 join 按索引对齐", a.join(b))
+
+
+# ---------------------------------------------------------------- 5 纵向合并
+def demo_concat():
+    d1 = pd.DataFrame({"id": [1, 1, 1, 2, 3, 4, 6],
+                       "col": ["a", "a", "b", "c", "v", "e", "q"]})
+    d2 = pd.DataFrame({"id": [1, 2, 3, 3, 5], "col": ["x", "y", "z", "v", "w"]})
+    show("5.1 纵向拼接", pd.concat([d1, d2], ignore_index=True))
+    show("5.2 拼接后 drop_duplicates",
+         pd.concat([d1, d2], ignore_index=True).drop_duplicates())
+    d3 = d1.rename(columns={"col": "new_col"})
+    show("5.3 列名不同时拼接（产生新列）",
+         pd.concat([d1, d3], ignore_index=True).drop_duplicates())
+
+
+# ---------------------------------------------------------------- 6 排序
+def demo_sort():
+    s = pd.DataFrame({"group": [1, 1, 1, 2, 1, 2],
+                      "name": ["Bob", "Lindy", "Mark", "Miki", "Sully", "Rose"],
+                      "score": [98, 78, 87, 77, 77, np.nan]})
+    show("6.1 降序、缺失放最后", s.sort_values("score", ascending=False, na_position="last"))
+    show("6.2 多列排序", s.sort_values(["group", "score"]))
+
+
+# ---------------------------------------------------------------- 7 分组汇总
+def demo_groupby():
+    s = pd.DataFrame({"name": ["Bob", "Lindy", "Mark", "Miki", "Sully", "Rose"],
+                      "class": [1, 1, 1, 2, 1, 2], "grade": [1, 1, 1, 2, 2, 2],
+                      "chinese": [88, 78, 86, 56, 77, 54],
+                      "math": [98, 78, 87, 77, 77, np.nan]})
+    show("7.1 单组最大值", s.groupby("grade")[["math"]].max())
+    show("7.2 双键均值", s.groupby(["grade", "class"])[["math"]].mean())
+    show("7.3 多列均值", s.groupby("grade")[["math", "chinese"]].mean())
+    show("7.4 agg 多个统计量", s.groupby("class")["math"].agg(["mean", "min", "max"]))
+
+    df = s.groupby(["grade", "class"])[["math", "chinese"]].agg(["min", "max"])
+    show("7.5 多层列索引结果", df)
+    show("7.6 取 ('math','min') 一列", df.loc[:, ("math", "min")])
+    show("7.7 取某个单元格", df.loc[(2, 2), ("math", "min")])
+
+
+# ---------------------------------------------------------------- 8 透视表
+def demo_pivot():
+    t = pd.DataFrame({"Monetary": [3608, 420, 1894, 3503, 4567],
+                      "cust_id": [10001, 10001, 10002, 10002, 10003],
+                      "type": ["Normal", "Special_offer", "Normal",
+                               "Special_offer", "Special_offer"]})
+    show("8.1 默认透视(mean)", pd.pivot_table(t, index="cust_id", columns="type", values="Monetary"))
+    show("8.2 sum + fill_value=0",
+         pd.pivot_table(t, index="cust_id", columns="type", values="Monetary",
+                        fill_value=0, aggfunc="sum"))
+
+
+# ---------------------------------------------------------------- 9 赋值
+def demo_assign():
+    s = pd.DataFrame({"name": ["Bob", "Lindy", "Mark", "Miki", "Sully", "Rose"],
+                      "score": [99, 78, 999, 77, 77, np.nan],
+                      "group": [1, 1, 1, 2, 1, 2]})
+    show("9.1 replace 单列", s.score.replace(999, np.nan))
+    show("9.2 replace 字典按列替换", s.replace({"score": {999: np.nan}, "name": {"Bob": np.nan}}))
+
+    def transform(row):
+        if row["group"] == 1:
+            return "class1"
+        return "class2"
+
+    show("9.3 apply(axis=1)", s.apply(transform, axis=1))
+    show("9.4 assign 接 apply", s.assign(class_n=s.apply(transform, axis=1)))
+    t = s.copy()
+    t.loc[t.group == 1, "class_n"] = "class1"
+    t.loc[t.group == 2, "class_n"] = "class2"
+    show("9.5 loc 条件赋值（推荐写法）", t)
+
+
+# ---------------------------------------------------------------- 10 重复
+def demo_duplicate():
+    s = pd.DataFrame({"group": [1, 1, 1, 2, 1, 2], "id": [1, 1, 1, 3, 4, 5],
+                      "name": ["Bob", "Bob", "Mark", "Miki", "Sully", "Rose"],
+                      "score": [99, 99, 87, 77, 77, np.nan]})
+    show("10.1 duplicated() 标出重复行", s[s.duplicated()])
+    show("10.2 drop_duplicates()", s.drop_duplicates())
+    show("10.3 按 id 去重", s.drop_duplicates("id"))
+
+
+# ---------------------------------------------------------------- 11 缺失
+def demo_missing():
+    s = pd.DataFrame({"group": [1, 1, np.nan, 2, 1, np.nan],
+                      "id": [1, 1, 1, 3, 4, np.nan],
+                      "name": ["Bob", "Bob", "Mark", "Miki", "Sully", np.nan],
+                      "score": [99, np.nan, 87, 77, 77, np.nan]})
+    show("11.1 各列缺失比例", s.apply(lambda col: col.isna().sum() / col.size))
+    show("11.2 均值填补", s.score.fillna(s.score.mean()))
+    show("11.3 中位数填补", s.score.fillna(s.score.median()))
+    show("11.4 isnull 掩码", s.score.isnull())
+    show("11.5 掩码转 0/1", s.score.isnull().astype(int))
+
+
+# ---------------------------------------------------------------- 12 噪声与分箱
+def cap(x, quantile=(0.01, 0.99)):
+    """盖帽法：把小于 1% 分位数、大于 99% 分位数的值拉回分位数上。"""
+    q01, q99 = x.quantile(list(quantile)).tolist()
+    y = x.copy()
+    if q01 > x.min():
+        y.loc[y < q01] = q01
+    if q99 < x.max():
+        y.loc[y > q99] = q99
+    return y
+
+
+def demo_noise():
+    np.random.seed(0)
+    raw = pd.DataFrame({"normal": np.random.randn(1000)})
+    capped = raw.apply(cap, quantile=[0.01, 0.99])
+    show("12.1 盖帽前后极值与标准差", pd.DataFrame({
+        "原始": [raw.normal.min(), raw.normal.max(), raw.normal.std()],
+        "盖帽后": [capped.normal.min(), capped.normal.max(), capped.normal.std()]},
+        index=["min", "max", "std"]).round(4))
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 3.8))
+    ax[0].hist(raw.normal, bins=50, color="#5aa9ff")
+    ax[0].set_title("盖帽前")
+    ax[1].hist(capped.normal, bins=50, color="#3ddc97")
+    ax[1].set_title("盖帽后（1%~99% 分位）")
+    for a in ax:
+        a.set_xlabel("取值"); a.set_ylabel("频数")
+    fig.tight_layout()
+    p = os.path.join(CHARTS, "4.1_盖帽法前后对比.png")
+    fig.savefig(p, dpi=120); plt.close(fig)
+    print(f"12.2 直方图已保存：{p}")
+
+    np.random.seed(0)
+    s = pd.DataFrame({"normal": np.random.randn(10)})
+    show("12.3 等宽分 5 箱", pd.cut(s.normal, 5))
+    show("12.4 自定义标签", pd.cut(s.normal, bins=5, labels=[1, 2, 3, 4, 5]))
+    show("12.5 两箱 bad/good", pd.cut(s.normal, bins=2, labels=["bad", "good"]))
+    show("12.6 分位数", s.normal.quantile([0, 0.5, 1]).round(4))
+    show("12.7 按分位数分箱",
+         pd.cut(s.normal, bins=s.normal.quantile([0, 0.5, 1]),
+                labels=["bad", "good"], include_lowest=True))
+
+
+def main():
+    print("第4章 数据整合和数据清洗 —— 12 个小节")
+    demo_read()
+    demo_rowcol()
+    demo_query()
+    demo_merge()
+    demo_concat()
+    demo_sort()
+    demo_groupby()
+    demo_pivot()
+    demo_assign()
+    demo_duplicate()
+    demo_missing()
+    demo_noise()
+    print("\n全部小节运行完毕。")
+
+
+if __name__ == "__main__" or True:
+    main()
